@@ -18,7 +18,7 @@ export function RiffHeader() {
           </div>
           <span className="truncate text-xl leading-none">Riff</span>
           <Badge variant="accent" className="hidden normal-case sm:inline-flex">
-            registry
+            rig · postgres
           </Badge>
         </Link>
 

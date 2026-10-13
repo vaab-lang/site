@@ -1,10 +1,15 @@
-# Free-tier Docker deploys on Render (spins down after ~15 min idle).
-# Dashboard: New → Blueprint → this repo, or connect and apply this file.
+# Render blueprint — site + riff registry with Postgres.
 # https://render.com/docs/blueprint-spec
 #
-# Two services, two custom domains (Render custom-domain limit):
-#   site → vaab.dev (landing, playground, todo demo at /tasks)
-#   riff → riff.vaab.dev (package registry)
+# Domains:
+#   site → vaab.dev
+#   riff → riff.vaab.dev
+
+databases:
+  - name: riff-db
+    plan: free
+    databaseName: riff
+    user: riff
 
 services:
   - type: web
@@ -28,3 +33,7 @@ services:
     envVars:
       - key: APP
         value: riff
+      - key: RIG_DATABASE_URL
+        fromDatabase:
+          name: riff-db
+          property: connectionString

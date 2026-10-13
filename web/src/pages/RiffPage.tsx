@@ -6,7 +6,7 @@ import { DownloadChart } from '@/components/riff/DownloadChart'
 import { RiffHeader } from '@/components/riff/RiffHeader'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { listRiffsWithStats, type RiffWithStats } from '@/lib/riffs'
+import { listRiffsWithStats, riffTags, type RiffWithStats } from '@/lib/riffs'
 import { cn } from '@/lib/utils'
 
 function formatDownloads(count: number): string {
@@ -19,14 +19,23 @@ export function RiffPage() {
   const [query, setQuery] = useState('')
   const [packages, setPackages] = useState<RiffWithStats[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const rows = await listRiffsWithStats()
-      if (!cancelled) {
-        setPackages(rows)
-        setLoading(false)
+      try {
+        const rows = await listRiffsWithStats()
+        if (!cancelled) {
+          setPackages(rows)
+          setError(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'could not load catalog')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     })()
     return () => {
@@ -37,12 +46,14 @@ export function RiffPage() {
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     if (!needle) return packages
-    return packages.filter(
-      (pkg) =>
+    return packages.filter((pkg) => {
+      const tags = riffTags(pkg)
+      return (
         pkg.name.includes(needle) ||
         pkg.description.toLowerCase().includes(needle) ||
-        pkg.tags.some((tag) => tag.includes(needle)),
-    )
+        tags.some((tag) => tag.includes(needle))
+      )
+    })
   }, [packages, query])
 
   const totalDownloads = packages.reduce((sum, pkg) => sum + pkg.downloads, 0)
@@ -64,9 +75,10 @@ export function RiffPage() {
               Find a <span className="text-gradient">riff</span> for your app
             </h1>
             <p className="mt-4 max-w-xl text-lg leading-relaxed text-slate-400">
-              Official Vaab packages. Search by name or tag, check download counts,
-              copy an install command, and add it to your{' '}
-              <code className="font-mono text-sm text-emerald-400">riff</code> manifest.
+              Official Vaab packages backed by{' '}
+              <code className="font-mono text-sm text-emerald-400">rig</code> and Postgres.
+              Search by name or tag, read live install counts, copy a command, and add it to
+              your manifest.
             </p>
 
             <div className="relative mt-8 max-w-xl">
@@ -85,6 +97,11 @@ export function RiffPage() {
                 ? 'Loading catalog…'
                 : `${filtered.length} riff${filtered.length === 1 ? '' : 's'} · ${formatDownloads(totalDownloads)} total downloads`}
             </p>
+            {error && (
+              <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                {error}
+              </p>
+            )}
           </div>
 
           <DownloadChart history={topHistory} className="lg:mb-2" height={180} />
@@ -125,7 +142,7 @@ export function RiffPage() {
                     <Download className="h-3 w-3 text-emerald-400/80" />
                     {formatDownloads(pkg.downloads)}
                   </span>
-                  {pkg.tags.slice(0, 2).map((tag) => (
+                  {riffTags(pkg).slice(0, 2).map((tag) => (
                     <span
                       key={tag}
                       className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-500"

@@ -7,7 +7,13 @@ import { DownloadChart } from '@/components/riff/DownloadChart'
 import { RiffHeader } from '@/components/riff/RiffHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { getRiffWithStats, installCommand, needCommand, type RiffWithStats } from '@/lib/riffs'
+import {
+  getRiffWithStats,
+  installCommand,
+  needCommand,
+  riffTags,
+  type RiffWithStats,
+} from '@/lib/riffs'
 
 export function RiffDetailPage() {
   const { name = '' } = useParams()
@@ -103,7 +109,7 @@ export function RiffDetailPage() {
               </dl>
 
               <div className="mt-6 flex flex-wrap gap-2">
-                {pkg.tags.map((tag) => (
+                {riffTags(pkg).map((tag) => (
                   <Badge key={tag} variant="outline" className="normal-case">
                     {tag}
                   </Badge>

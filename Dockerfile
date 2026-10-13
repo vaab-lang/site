@@ -1,9 +1,21 @@
-# site — Vaab landing page + playground
-#
-# The HTTP server is Vaab itself (`vaab serve main.vaab`). No nginx/Caddy.
+# site — Vaab landing page + riff registry (rig + Postgres on Render)
 #
 # Build:  docker build --platform linux/amd64 -t site .
-# Run:    docker run --rm -p 8787:8787 -e PORT=8787 site
+# Run:    docker run --rm -p 8787:8787 -e PORT=8787 -e APP=riff \
+#           -e RIG_DATABASE_URL=sqlite:riff-rig.db site
+
+# ── Vaab toolchain (Postgres-enabled) ─────────────────────────────────
+FROM rust:1.80-bookworm AS vaab-build
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+ARG VAAB_REPO=https://github.com/vaab-lang/vaab.git
+ARG VAAB_REF=master
+RUN git clone --depth 1 --branch "${VAAB_REF}" "${VAAB_REPO}" vaab \
+    && cd vaab \
+    && cargo build --release -p vaab-cli --bin vaab \
+    && cp target/release/vaab /usr/local/bin/vaab
 
 # ── frontend ──────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim AS web
@@ -17,16 +29,10 @@ RUN npm run build
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Prebuilt Vaab CLI (linux x86_64). Linked riff NodeId fix needs >=0.1.4.
-ARG VAAB_VERSION=v0.1.4
-RUN curl -fsSL \
-      "https://github.com/vaab-lang/vaab/releases/download/${VAAB_VERSION}/vaab-linux-x86_64" \
-      -o /usr/local/bin/vaab \
-    && chmod +x /usr/local/bin/vaab \
-    && vaab version | grep -q 0.1.4
+COPY --from=vaab-build /usr/local/bin/vaab /usr/local/bin/vaab
 
 RUN useradd --create-home --shell /bin/bash site
 USER site
@@ -39,7 +45,6 @@ COPY --chown=site:site vendor ./vendor
 COPY --from=web --chown=site:site /src/web/dist ./web/dist
 COPY --chown=site:site docker-entrypoint.sh /home/site/docker-entrypoint.sh
 RUN chmod +x /home/site/docker-entrypoint.sh
-# Resolve `need rig from ./vendor/rig` for the registry app
 RUN vaab gather
 
 EXPOSE 8787
