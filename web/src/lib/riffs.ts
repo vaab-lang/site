@@ -16,6 +16,13 @@ export type RiffWithStats = RiffPackage & {
   history: DownloadPoint[]
 }
 
+type RiffEvent = {
+  name?: string
+  kind?: string
+  id?: string
+  ts?: string
+}
+
 function hashString(value: string): number {
   let hash = 0
   for (let i = 0; i < value.length; i += 1) {
@@ -63,14 +70,26 @@ export function synthesizeHistory(name: string, total: number): DownloadPoint[] 
   return points
 }
 
-async function fetchStats(name: string): Promise<{ downloads: number } | null> {
+/** Tallies install events from GET /api/riffs (rig `riff_events` rows). */
+function tallyDownloads(events: RiffEvent[]): Record<string, number> {
+  const live: Record<string, number> = {}
+  for (const event of events) {
+    const name = event.name
+    if (!name) continue
+    live[name] = (live[name] ?? 0) + 1
+  }
+  return live
+}
+
+async function fetchLiveDownloads(): Promise<Record<string, number>> {
   try {
-    const response = await fetch(`/api/riffs/${encodeURIComponent(name)}`)
-    if (!response.ok) return null
-    const data = (await response.json()) as RiffStats
-    return { downloads: data.downloads }
+    const response = await fetch('/api/riffs')
+    if (!response.ok) return {}
+    const rows = (await response.json()) as RiffEvent[]
+    if (!Array.isArray(rows)) return {}
+    return tallyDownloads(rows)
   } catch {
-    return null
+    return {}
   }
 }
 
@@ -83,17 +102,7 @@ export async function trackInstall(name: string): Promise<void> {
 }
 
 export async function listRiffsWithStats(): Promise<RiffWithStats[]> {
-  let live: Record<string, number> = {}
-
-  try {
-    const response = await fetch('/api/riffs')
-    if (response.ok) {
-      const rows = (await response.json()) as RiffStats[]
-      live = Object.fromEntries(rows.map((row) => [row.name, row.downloads]))
-    }
-  } catch {
-    // Fall back to catalog seeds.
-  }
+  const live = await fetchLiveDownloads()
 
   return RIFF_CATALOG.map((pkg) => {
     const downloads = live[pkg.name] ?? pkg.seedDownloads
@@ -109,8 +118,8 @@ export async function getRiffWithStats(name: string): Promise<RiffWithStats | nu
   const pkg = getRiff(name)
   if (!pkg) return null
 
-  const live = await fetchStats(name)
-  const downloads = live?.downloads ?? pkg.seedDownloads
+  const live = await fetchLiveDownloads()
+  const downloads = live[name] ?? pkg.seedDownloads
 
   return {
     ...pkg,

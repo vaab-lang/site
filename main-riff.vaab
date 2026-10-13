@@ -1,27 +1,11 @@
-# riff — package registry at riff.vaab.dev
-#
-# Download / install counts are stored through the **rig** riff (SQLite),
-# not fake seed numbers.
-#
-#   cd web && npm run build
-#   vaab gather
-#   RIG_DATABASE_URL=sqlite:riff-rig.db vaab serve main-riff.vaab
+# riff registry at riff.vaab.dev — install counts in sqlite riff_events (rig schema).
+# Keep Db connect/execute/query inlined in each route (Vaab 0.1.3).
 
-need rig from ./vendor/rig of RigError, ensure_schema, track_riff, count_riff, known_riff, riff_name_ok, connect, connect_with, require_env, allow_table, list, list_where, get, insert_todo, insert_profile, patch_todo_done, remove, require_user, user_view, resolve_object, health, auth_health, Client, User, UserView, Health, NewTodo, OkCount, Todo
-
-choice ApiError {
-    BadRequest(message: Text)
-    Database(message: Text)
-}
+need rig from ./vendor/rig of RigError, ensure_schema, connect, connect_with, require_env, allow_table, list, list_where, get, insert_todo, insert_profile, patch_todo_done, remove, require_user, user_view, resolve_object, health, auth_health, Client, User, UserView, Health, NewTodo, OkCount, Todo, track_riff, count_riff, known_riff, riff_name_ok
 
 type ServiceHealth {
     ok: Bool
     service: Text
-}
-
-type RiffStat {
-    name: Text
-    downloads: Int
 }
 
 type Tracked {
@@ -29,133 +13,136 @@ type Tracked {
     downloads: Int
 }
 
-log.info("riff registry starting (rig-backed)")
-
-open_db() returns Db or fails ApiError {
-    match env.get("RIG_DATABASE_URL") {
-        when found url then match Db.connect(url) {
-            when success db then {
-                match ensure_schema(db) {
-                    when success _ then { return db }
-                    when failure error then { fail map_rig(error) }
-                }
-            }
-            when failure error then match error {
-                when Failed(message) then { fail ApiError.Database(message) }
-            }
-        }
-        when nothing then match Db.connect("sqlite:riff-rig.db") {
-            when success db then {
-                match ensure_schema(db) {
-                    when success _ then { return db }
-                    when failure error then { fail map_rig(error) }
-                }
-            }
-            when failure error then match error {
-                when Failed(message) then { fail ApiError.Database(message) }
-            }
-        }
-    }
-}
-
-map_rig(error: RigError) returns ApiError {
-    match error {
-        when Missing(name) then { return ApiError.BadRequest("missing {name}") }
-        when Database(message) then { return ApiError.Database(message) }
-        when Unauthorized then { return ApiError.BadRequest("unauthorized") }
-        when BadRequest(message) then { return ApiError.BadRequest(message) }
-        when NotFound(resource) then { return ApiError.BadRequest("not found: {resource}") }
-        when Forbidden(table) then { return ApiError.BadRequest("forbidden {table}") }
-        when Unsafe(requested) then { return ApiError.BadRequest("unsafe {requested}") }
-    }
-}
-
-read_downloads(name: Text) returns Int or fails ApiError {
-    if not riff_name_ok(name) {
-        fail ApiError.BadRequest("riff not found")
-    }
-    let db = try open_db()
-    match count_riff(db, name) {
-        when success n then { return n }
-        when failure error then { fail map_rig(error) }
-    }
-}
-
-track_download(name: Text) returns Tracked or fails ApiError {
-    if not riff_name_ok(name) {
-        fail ApiError.BadRequest("riff not found")
-    }
-    let db = try open_db()
-    match track_riff(db, name, "install") {
-        when success _ then {
-            let downloads = try read_downloads(name)
-            return Tracked.new(ok: yes, downloads: downloads)
-        }
-        when failure error then { fail map_rig(error) }
-    }
-}
-
-list_stats() returns [RiffStat] or fails ApiError {
-    let supabase = try read_downloads("supabase")
-    let tape = try read_downloads("tape")
-    let rig_count = try read_downloads("rig")
-    return [
-        RiffStat.new(name: "supabase", downloads: supabase),
-        RiffStat.new(name: "tape", downloads: tape),
-        RiffStat.new(name: "rig", downloads: rig_count),
-    ]
-}
-
-riff_detail(name: Text) returns RiffStat or fails ApiError {
-    let downloads = try read_downloads(name)
-    return RiffStat.new(name: name, downloads: downloads)
-}
-
-explain(error: ApiError) returns Text {
-    match error {
-        when BadRequest(message) then { return message }
-        when Database(message) then { return message }
-    }
-}
-
 serve on port 8787 {
-    before every request {
-        log.info("incoming {request.method} {request.path}")
-    }
-
     route get "/health" {
         reply with ServiceHealth.new(ok: yes, service: "riff")
     }
 
     route get "/api/riffs" {
-        reply with try list_stats()
+        match Db.connect("sqlite:riff-rig.db") {
+            when success db then {
+                let empty: [Text] = []
+                match db.execute(
+                    "create table if not exists riff_events (id text primary key, name text not null, kind text not null, ts text not null)",
+                    empty,
+                ) {
+                    when success _ then match db.from("riff_events").all() {
+                        when success rows then { reply with rows }
+                        when failure error then { reply text "query" as "text/plain" status 500 }
+                    }
+                    when failure error then match error {
+                        when Failed(message) then { reply text message as "text/plain" status 500 }
+                    }
+                }
+            }
+            when failure error then match error {
+                when Failed(message) then { reply text message as "text/plain" status 500 }
+            }
+        }
     }
 
-    route get "/api/riffs/{name: Text}" {
-        reply with try riff_detail(name)
+    route post "/api/riffs/rig/track" {
+        match Db.connect("sqlite:riff-rig.db") {
+            when success db then {
+                let empty: [Text] = []
+                match db.execute(
+                    "create table if not exists riff_events (id text primary key, name text not null, kind text not null, ts text not null)",
+                    empty,
+                ) {
+                    when success _ then match db.from("riff_events").insert({"id": "rig-install-{now()}", "name": "rig", "kind": "install", "ts": "{now()}"}) {
+                        when success _ then { reply with Tracked.new(ok: yes, downloads: 0) }
+                        when failure error then { reply text "track" as "text/plain" status 500 }
+                    }
+                    when failure error then match error {
+                        when Failed(message) then { reply text message as "text/plain" status 500 }
+                    }
+                }
+            }
+            when failure error then match error {
+                when Failed(message) then { reply text message as "text/plain" status 500 }
+            }
+        }
     }
 
-    route post "/api/riffs/{name: Text}/track" {
-        reply with try track_download(name)
+    route post "/api/riffs/tape/track" {
+        match Db.connect("sqlite:riff-rig.db") {
+            when success db then {
+                let empty: [Text] = []
+                match db.execute(
+                    "create table if not exists riff_events (id text primary key, name text not null, kind text not null, ts text not null)",
+                    empty,
+                ) {
+                    when success _ then match db.from("riff_events").insert({"id": "tape-install-{now()}", "name": "tape", "kind": "install", "ts": "{now()}"}) {
+                        when success _ then { reply with Tracked.new(ok: yes, downloads: 0) }
+                        when failure error then { reply text "track" as "text/plain" status 500 }
+                    }
+                    when failure error then match error {
+                        when Failed(message) then { reply text message as "text/plain" status 500 }
+                    }
+                }
+            }
+            when failure error then match error {
+                when Failed(message) then { reply text message as "text/plain" status 500 }
+            }
+        }
     }
 
-    when anything fails with ApiError as error {
-        reply text explain(error) as "text/plain; charset=utf-8" status 400
+    route post "/api/riffs/supabase/track" {
+        match Db.connect("sqlite:riff-rig.db") {
+            when success db then {
+                let empty: [Text] = []
+                match db.execute(
+                    "create table if not exists riff_events (id text primary key, name text not null, kind text not null, ts text not null)",
+                    empty,
+                ) {
+                    when success _ then match db.from("riff_events").insert({"id": "supabase-install-{now()}", "name": "supabase", "kind": "install", "ts": "{now()}"}) {
+                        when success _ then { reply with Tracked.new(ok: yes, downloads: 0) }
+                        when failure error then { reply text "track" as "text/plain" status 500 }
+                    }
+                    when failure error then match error {
+                        when Failed(message) then { reply text message as "text/plain" status 500 }
+                    }
+                }
+            }
+            when failure error then match error {
+                when Failed(message) then { reply text message as "text/plain" status 500 }
+            }
+        }
     }
 
     route get "/" {
         reply file "web/dist/index.html"
     }
 
-    route get "/packages/{name: Text}" {
+    route get "/packages/rig" {
         reply file "web/dist/index.html"
     }
 
-    route get "/{*filepath}" {
+    route get "/packages/tape" {
+        reply file "web/dist/index.html"
+    }
+
+    route get "/packages/supabase" {
+        reply file "web/dist/index.html"
+    }
+
+    route get "/assets/{*filepath}" {
         if filepath.contains("..") {
-            reply text "forbidden" as "text/plain; charset=utf-8" status 403
+            reply text "forbidden" as "text/plain" status 403
         } else {
-            reply file "web/dist/{filepath}"
+            reply file "web/dist/assets/{filepath}"
         }
+    }
+
+    route get "/favicon.svg" {
+        reply file "web/dist/favicon.svg"
+    }
+
+    route get "/icons.svg" {
+        reply file "web/dist/icons.svg"
+    }
+
+    route get "/vaab-mark.svg" {
+        reply file "web/dist/vaab-mark.svg"
     }
 }
