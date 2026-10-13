@@ -20,13 +20,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Prebuilt Vaab CLI (linux x86_64). Readability round needs >=0.1.3.
-ARG VAAB_VERSION=v0.1.3
+# Prebuilt Vaab CLI (linux x86_64). Linked riff NodeId fix needs >=0.1.4.
+ARG VAAB_VERSION=v0.1.4
 RUN curl -fsSL \
       "https://github.com/vaab-lang/vaab/releases/download/${VAAB_VERSION}/vaab-linux-x86_64" \
       -o /usr/local/bin/vaab \
     && chmod +x /usr/local/bin/vaab \
-    && vaab version | grep -q 0.1.3
+    && vaab version | grep -q 0.1.4
 
 RUN useradd --create-home --shell /bin/bash site
 USER site

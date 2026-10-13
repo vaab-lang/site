@@ -2,6 +2,25 @@
 
 What shipped in each Vaab release. Newest first.
 
+## 0.1.4 — 13 Oct 2026
+
+### Riffs, `Db`, and `vaab serve`
+
+Linked riffs, multiple queries on one `Db` handle, and server hooks all run cleanly without workarounds.
+
+| | |
+|---|---|
+| Merged `NodeId`s | `vaab_riff::merge` renumbers syntax nodes across linked riffs so multiple `Db` queries, helper calls, and bare `need … of …` imports never collide in the type or bytecode tables. |
+| Internal riff helpers | `need … of …` keeps unimported declarations prefixed with `{alias}__` so exported riff functions can call private helpers. |
+| `Db.connect` | `sqlite://` URLs strip their prefix cleanly, and `:memory:` connections stay independent per `Db.connect` call. |
+| Server hooks & params | `vaab serve` runs top-level globals at startup, executes `before every request` and `when anything fails` blocks, and preserves `Text` route parameters even when digits are passed. |
+| Install telemetry | `riff install` records installs against [riff.vaab.dev](https://riff.vaab.dev), backed by **[rig](https://github.com/vaab-lang/rig)**. |
+
+### Site & Riffs
+
+- Shipped **[rig](https://github.com/vaab-lang/rig)** (`vaab-lang/rig`) — Supabase-shaped backend helpers + Studio UI
+- Added `rig` to [riff.vaab.dev](https://riff.vaab.dev) with live SQLite install telemetry; Docker pin → `v0.1.4`
+
 ## 0.1.3 — 22 Sep 2026
 
 ### Language readability

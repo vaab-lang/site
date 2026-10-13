@@ -16,8 +16,9 @@ export type RiffWithStats = RiffPackage & {
   history: DownloadPoint[]
 }
 
-type RiffEvent = {
+type RiffRow = {
   name?: string
+  downloads?: number
   kind?: string
   id?: string
   ts?: string
@@ -70,13 +71,17 @@ export function synthesizeHistory(name: string, total: number): DownloadPoint[] 
   return points
 }
 
-/** Tallies install events from GET /api/riffs (rig `riff_events` rows). */
-function tallyDownloads(events: RiffEvent[]): Record<string, number> {
+/** Parses either `[RiffStat]` (`{ name, downloads }`) or raw `riff_events` rows from GET /api/riffs. */
+function tallyDownloads(rows: RiffRow[]): Record<string, number> {
   const live: Record<string, number> = {}
-  for (const event of events) {
-    const name = event.name
+  for (const row of rows) {
+    const name = row.name
     if (!name) continue
-    live[name] = (live[name] ?? 0) + 1
+    if (typeof row.downloads === 'number') {
+      live[name] = row.downloads
+    } else {
+      live[name] = (live[name] ?? 0) + 1
+    }
   }
   return live
 }
@@ -85,11 +90,25 @@ async function fetchLiveDownloads(): Promise<Record<string, number>> {
   try {
     const response = await fetch('/api/riffs')
     if (!response.ok) return {}
-    const rows = (await response.json()) as RiffEvent[]
+    const rows = (await response.json()) as RiffRow[]
     if (!Array.isArray(rows)) return {}
     return tallyDownloads(rows)
   } catch {
     return {}
+  }
+}
+
+async function fetchStats(name: string): Promise<{ downloads: number } | null> {
+  try {
+    const response = await fetch(`/api/riffs/${encodeURIComponent(name)}`)
+    if (!response.ok) return null
+    const data = (await response.json()) as RiffRow
+    if (typeof data.downloads === 'number') {
+      return { downloads: data.downloads }
+    }
+    return null
+  } catch {
+    return null
   }
 }
 
@@ -117,6 +136,15 @@ export async function listRiffsWithStats(): Promise<RiffWithStats[]> {
 export async function getRiffWithStats(name: string): Promise<RiffWithStats | null> {
   const pkg = getRiff(name)
   if (!pkg) return null
+
+  const single = await fetchStats(name)
+  if (single) {
+    return {
+      ...pkg,
+      downloads: single.downloads,
+      history: synthesizeHistory(name, single.downloads),
+    }
+  }
 
   const live = await fetchLiveDownloads()
   const downloads = live[name] ?? pkg.seedDownloads

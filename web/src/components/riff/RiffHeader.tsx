@@ -33,6 +33,22 @@ export function RiffHeader() {
             Install Vaab
           </a>
           <a
+            href="https://github.com/vaab-lang/rig"
+            target="_blank"
+            rel="noreferrer"
+            className="text-slate-400 transition-colors hover:text-slate-100"
+          >
+            Rig
+          </a>
+          <a
+            href="https://github.com/vaab-lang/tape"
+            target="_blank"
+            rel="noreferrer"
+            className="text-slate-400 transition-colors hover:text-slate-100"
+          >
+            Tape
+          </a>
+          <a
             href="https://github.com/vaab-lang/vaab-riffs"
             target="_blank"
             rel="noreferrer"

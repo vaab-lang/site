@@ -11,7 +11,7 @@ One Vaab process serves each app: static files, `/health`, and app-specific APIs
 
 ## Quick start
 
-Requires a local [Vaab](https://github.com/vaab-lang/vaab) build (≥ 0.1.3).
+Requires a local [Vaab](https://github.com/vaab-lang/vaab) build (≥ 0.1.4).
 
 ```sh
 cd web && npm install && npm run build && cd ..

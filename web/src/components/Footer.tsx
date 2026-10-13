@@ -23,8 +23,32 @@ export function Footer() {
           >
             GitHub
           </a>
+          <a
+            href="https://github.com/vaab-lang/vaab/releases/tag/v0.1.4"
+            target="_blank"
+            rel="noreferrer"
+            className="transition-colors hover:text-white"
+          >
+            v0.1.4
+          </a>
           <a href={RIFF_ORIGIN} className="transition-colors hover:text-white">
             Riff registry
+          </a>
+          <a
+            href="https://github.com/vaab-lang/rig"
+            target="_blank"
+            rel="noreferrer"
+            className="transition-colors hover:text-white"
+          >
+            Rig
+          </a>
+          <a
+            href="https://github.com/vaab-lang/tape"
+            target="_blank"
+            rel="noreferrer"
+            className="transition-colors hover:text-white"
+          >
+            Tape
           </a>
           <Link to="/tasks" className="transition-colors hover:text-white">
             Todo demo
