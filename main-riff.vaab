@@ -1,14 +1,20 @@
 # riff — package registry at riff.vaab.dev
 #
+# Download / install counts are stored through the **rig** riff (SQLite),
+# not fake seed numbers.
+#
 #   cd web && npm run build
-#   vaab serve main-riff.vaab
+#   vaab gather
+#   RIG_DATABASE_URL=sqlite:riff-rig.db vaab serve main-riff.vaab
+
+need rig from ./vendor/rig of RigError, ensure_schema, track_riff, count_riff, known_riff, riff_name_ok, connect, connect_with, require_env, allow_table, list, list_where, get, insert_todo, insert_profile, patch_todo_done, remove, require_user, user_view, resolve_object, health, auth_health, Client, User, UserView, Health, NewTodo, OkCount, Todo
 
 choice ApiError {
     BadRequest(message: Text)
-    Store(message: Text)
+    Database(message: Text)
 }
 
-type Health {
+type ServiceHealth {
     ok: Bool
     service: Text
 }
@@ -23,81 +29,80 @@ type Tracked {
     downloads: Int
 }
 
-log.info("riff registry starting")
+log.info("riff registry starting (rig-backed)")
 
-api_from_store(error: StoreError) returns ApiError {
+open_db() returns Db or fails ApiError {
+    match env.get("RIG_DATABASE_URL") {
+        when found url then match Db.connect(url) {
+            when success db then {
+                match ensure_schema(db) {
+                    when success _ then { return db }
+                    when failure error then { fail map_rig(error) }
+                }
+            }
+            when failure error then match error {
+                when Failed(message) then { fail ApiError.Database(message) }
+            }
+        }
+        when nothing then match Db.connect("sqlite:riff-rig.db") {
+            when success db then {
+                match ensure_schema(db) {
+                    when success _ then { return db }
+                    when failure error then { fail map_rig(error) }
+                }
+            }
+            when failure error then match error {
+                when Failed(message) then { fail ApiError.Database(message) }
+            }
+        }
+    }
+}
+
+map_rig(error: RigError) returns ApiError {
     match error {
-        when Failed(message) then { return ApiError.Store(message) }
+        when Missing(name) then { return ApiError.BadRequest("missing {name}") }
+        when Database(message) then { return ApiError.Database(message) }
+        when Unauthorized then { return ApiError.BadRequest("unauthorized") }
+        when BadRequest(message) then { return ApiError.BadRequest(message) }
+        when NotFound(resource) then { return ApiError.BadRequest("not found: {resource}") }
+        when Forbidden(table) then { return ApiError.BadRequest("forbidden {table}") }
+        when Unsafe(requested) then { return ApiError.BadRequest("unsafe {requested}") }
     }
-}
-
-open_stats() returns Store or fails ApiError {
-    match Store.open("riff-stats.vaab.kv") {
-        when success store then { return store }
-        when failure error then { fail api_from_store(error) }
-    }
-}
-
-riff_ok(name: Text) returns Bool {
-    if name.is_empty { return no }
-    if name.contains("..") { return no }
-    if name.contains("/") { return no }
-    if name.contains(":") { return no }
-    if name.contains(" ") { return no }
-    return yes
-}
-
-track_prefix(name: Text) returns Text {
-    return "track:{name}:"
-}
-
-seed_downloads(name: Text) returns Int {
-    if name == "supabase" { return 1842 }
-    if name == "tape" { return 956 }
-    return 0
 }
 
 read_downloads(name: Text) returns Int or fails ApiError {
-    if not riff_ok(name) {
-        fail ApiError.BadRequest("bad riff name")
-    }
-    let seed = seed_downloads(name)
-    if seed == 0 {
+    if not riff_name_ok(name) {
         fail ApiError.BadRequest("riff not found")
     }
-    let store = try open_stats()
-    let prefix = track_prefix(name)
-    match store.from(prefix).count() {
-        when success events then { return seed + events }
-        when failure error then { fail api_from_store(error) }
+    let db = try open_db()
+    match count_riff(db, name) {
+        when success n then { return n }
+        when failure error then { fail map_rig(error) }
     }
 }
 
 track_download(name: Text) returns Tracked or fails ApiError {
-    if not riff_ok(name) {
-        fail ApiError.BadRequest("bad riff name")
-    }
-    if seed_downloads(name) == 0 {
+    if not riff_name_ok(name) {
         fail ApiError.BadRequest("riff not found")
     }
-    let store = try open_stats()
-    let prefix = track_prefix(name)
-    let key = "{prefix}{now()}"
-    match store.from(prefix).insert({"key": key, "ts": "{now()}"}) {
+    let db = try open_db()
+    match track_riff(db, name, "install") {
         when success _ then {
             let downloads = try read_downloads(name)
             return Tracked.new(ok: yes, downloads: downloads)
         }
-        when failure error then { fail api_from_store(error) }
+        when failure error then { fail map_rig(error) }
     }
 }
 
 list_stats() returns [RiffStat] or fails ApiError {
     let supabase = try read_downloads("supabase")
     let tape = try read_downloads("tape")
+    let rig_count = try read_downloads("rig")
     return [
         RiffStat.new(name: "supabase", downloads: supabase),
         RiffStat.new(name: "tape", downloads: tape),
+        RiffStat.new(name: "rig", downloads: rig_count),
     ]
 }
 
@@ -109,7 +114,7 @@ riff_detail(name: Text) returns RiffStat or fails ApiError {
 explain(error: ApiError) returns Text {
     match error {
         when BadRequest(message) then { return message }
-        when Store(message) then { return message }
+        when Database(message) then { return message }
     }
 }
 
@@ -119,7 +124,7 @@ serve on port 8787 {
     }
 
     route get "/health" {
-        reply with Health.new(ok: yes, service: "riff")
+        reply with ServiceHealth.new(ok: yes, service: "riff")
     }
 
     route get "/api/riffs" {

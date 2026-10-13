@@ -7,10 +7,23 @@ export type RiffPackage = {
   repo: string
   needs: string
   tags: string[]
+  /** Fallback only when the live rig-backed API is unreachable. */
   seedDownloads: number
 }
 
 export const RIFF_CATALOG: RiffPackage[] = [
+  {
+    name: 'rig',
+    version: '0.1.0',
+    description:
+      'Supabase-shaped backend helpers for Vaab — data API, auth adapter, object storage paths, and riff install tracking.',
+    author: 'vaab-lang',
+    licence: 'MIT',
+    repo: 'https://github.com/vaab-lang/rig',
+    needs: 'vaab at 0.1',
+    tags: ['database', 'auth', 'storage', 'backend', 'supabase'],
+    seedDownloads: 0,
+  },
   {
     name: 'supabase',
     version: '0.1.0',
@@ -20,7 +33,7 @@ export const RIFF_CATALOG: RiffPackage[] = [
     repo: 'https://github.com/vaab-lang/vaab-riffs/tree/main/supabase',
     needs: 'vaab at 0.1',
     tags: ['database', 'api', 'supabase'],
-    seedDownloads: 1842,
+    seedDownloads: 0,
   },
   {
     name: 'tape',
@@ -31,7 +44,7 @@ export const RIFF_CATALOG: RiffPackage[] = [
     repo: 'https://github.com/vaab-lang/tape',
     needs: 'vaab at 0.1',
     tags: ['http', 'static', 'server'],
-    seedDownloads: 956,
+    seedDownloads: 0,
   },
 ]
 

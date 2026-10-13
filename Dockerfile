@@ -35,9 +35,12 @@ ENV HOME=/home/site \
     PORT=8787
 
 COPY --chown=site:site main.vaab main-riff.vaab riff ./
+COPY --chown=site:site vendor ./vendor
 COPY --from=web --chown=site:site /src/web/dist ./web/dist
 COPY --chown=site:site docker-entrypoint.sh /home/site/docker-entrypoint.sh
 RUN chmod +x /home/site/docker-entrypoint.sh
+# Resolve `need rig from ./vendor/rig` for the registry app
+RUN vaab gather
 
 EXPOSE 8787
 ENTRYPOINT ["/home/site/docker-entrypoint.sh"]

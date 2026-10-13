@@ -19,3 +19,8 @@ web/.vite/
 needed.lock
 benchmarks/.data/
 *.vaab.kv
+
+# rig-backed riff registry DB
+riff-rig.db
+riff-rig.db-*
+riff-stats.vaab.kv

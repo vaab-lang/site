@@ -49,9 +49,12 @@ vaab.dev (APP=site)
 
 riff.vaab.dev (APP=riff)
    ├─ GET /            → riff registry UI
-   ├─ GET /api/riffs   → package download counts
-   └─ POST /api/riffs/{name}/track → increment on copy/install
+   ├─ GET /api/riffs   → live install counts (rig + SQLite)
+   └─ POST /api/riffs/{name}/track → record install/copy via rig
 ```
+
+Install/download telemetry is stored by the **[rig](https://github.com/vaab-lang/rig)** riff
+(`riff_events` table). The UI and `riff install` both hit `/track`.
 
 ## Docker
 
