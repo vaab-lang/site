@@ -73,6 +73,21 @@ type RiffPackage {
     views: Int
 }
 
+type RiffTracked {
+    ok: Bool
+    downloads: Int
+}
+
+type RiffViewed {
+    ok: Bool
+    views: Int
+}
+
+type RegistryHealth {
+    ok: Bool
+    service: Text
+}
+
 # --- connect ---------------------------------------------------------------
 
 to connect() returns Client or fails RigError {
@@ -2243,6 +2258,31 @@ to auth_health() returns Health {
     return Health.new(name: "rig-auth", ok: yes, version: "0.1.0")
 }
 
+to registry_health() returns RegistryHealth {
+    return RegistryHealth.new(ok: yes, service: "riff")
+}
+
+to catalog_web_root() returns Text {
+    match env.get("RIG_CATALOG_WEB_ROOT") {
+        when found root then { return root }
+        when nothing then { return "web/dist" }
+    }
+}
+
+to resolve_catalog(requested: Text) returns Text or fails RigError {
+    if requested.contains("..") {
+        fail RigError.Unsafe(requested)
+    }
+    let root = catalog_web_root()
+    if requested.is_empty {
+        return "{root}/index.html"
+    }
+    if requested.contains(".") {
+        return "{root}/{requested}"
+    }
+    return "{root}/index.html"
+}
+
 to explain(error: RigError) returns Text {
     match error {
         when Missing(name) then { return "missing {name}" }
@@ -2487,6 +2527,86 @@ cast RigRoutes {
         let db = try RigRoutes.db()
         let count = try save_webhook(db, body)
         return OkCount.new(count: count)
+    }
+
+    factory riff_catalog() returns [RiffPackage] or fails RigError {
+        let db = try RigRoutes.db()
+        return catalog_riffs(db)
+    }
+
+    factory riff_package(name: Text) returns RiffPackage or fails RigError {
+        let db = try RigRoutes.db()
+        return package_with_downloads(db, name)
+    }
+
+    factory riff_history(name: Text) returns [{Text: Text}] or fails RigError {
+        let db = try RigRoutes.db()
+        return install_history(db, name)
+    }
+
+    factory riff_track_install(name: Text) returns RiffTracked or fails RigError {
+        let db = try RigRoutes.db()
+        if not riff_name_ok(db, name) {
+            fail RigError.BadRequest("riff not found")
+        }
+        let downloads = try track_riff(db, name, "install")
+        return RiffTracked.new(ok: yes, downloads: downloads)
+    }
+
+    factory riff_track_view(name: Text) returns RiffViewed or fails RigError {
+        let db = try RigRoutes.db()
+        if not riff_name_ok(db, name) {
+            fail RigError.BadRequest("riff not found")
+        }
+        let views = try track_riff(db, name, "view")
+        return RiffViewed.new(ok: yes, views: views)
+    }
+}
+
+mount rig_registry at "/api" {
+    route get "/riffs" {
+        match RigRoutes.riff_catalog() {
+            when success rows then { reply with rows }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 400
+            }
+        }
+    }
+
+    route get "/riffs/{name: Text}" {
+        match RigRoutes.riff_package(name) {
+            when success pkg then { reply with pkg }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 400
+            }
+        }
+    }
+
+    route get "/riffs/{name: Text}/history" {
+        match RigRoutes.riff_history(name) {
+            when success rows then { reply with rows }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 400
+            }
+        }
+    }
+
+    route post "/riffs/{name: Text}/track" {
+        match RigRoutes.riff_track_install(name) {
+            when success tracked then { reply with tracked }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 400
+            }
+        }
+    }
+
+    route post "/riffs/{name: Text}/view" {
+        match RigRoutes.riff_track_view(name) {
+            when success viewed then { reply with viewed }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 400
+            }
+        }
     }
 }
 
@@ -3091,6 +3211,42 @@ mount rig_studio_api at "/studio-api" {
             }
             when failure _ then {
                 reply text "unauthorized" as "text/plain" status 401
+            }
+        }
+    }
+}
+
+mount rig_riff at "" {
+    mount rig_registry at "/api"
+    mount rig_studio at "/studio"
+
+    route get "/health" {
+        reply with registry_health()
+    }
+
+    route get "/" {
+        match resolve_catalog("index.html") {
+            when success target then { reply file target }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 403
+            }
+        }
+    }
+
+    route get "/packages/{name: Text}" {
+        match resolve_catalog("index.html") {
+            when success target then { reply file target }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 403
+            }
+        }
+    }
+
+    route get "/{*filepath}" {
+        match resolve_catalog(filepath) {
+            when success target then { reply file target }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 403
             }
         }
     }

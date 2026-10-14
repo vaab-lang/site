@@ -1,108 +1,16 @@
-# riff — package registry at riff.vaab.dev (rig + Postgres on Render)
+# riff — package registry at riff.vaab.dev (rig mounts + Postgres on Render)
+#
+#   RIG_DATABASE_URL=sqlite:riff-rig.db vaab serve main-riff.vaab
+#   Studio: http://127.0.0.1:8787/studio/  (Basic auth: admin / secret)
 
-need rig from ./vendor/rig of RigError, RiffPackage, open_url, catalog_riffs, package_with_downloads, install_history, track_riff, riff_name_ok
+need rig
 
-type ServiceHealth {
-    ok: Bool
-    service: Text
-}
-
-type Tracked {
-    ok: Bool
-    downloads: Int
-}
-
-type Viewed {
-    ok: Bool
-    views: Int
-}
-
-log.info("riff registry starting (rig + database)")
-
-open_registry_db() returns Db or fails RigError {
-    let url = env.get("RIG_DATABASE_URL") otherwise "sqlite:riff-rig.db"
-    return open_url(url)
-}
-
-track_download(name: Text) returns Tracked or fails RigError {
-    let db = try open_registry_db()
-    if not riff_name_ok(db, name) {
-        fail RigError.BadRequest("riff not found")
-    }
-    let downloads = try track_riff(db, name, "install")
-    return Tracked.new(ok: yes, downloads: downloads)
-}
-
-track_view(name: Text) returns Viewed or fails RigError {
-    let db = try open_registry_db()
-    if not riff_name_ok(db, name) {
-        fail RigError.BadRequest("riff not found")
-    }
-    let views = try track_riff(db, name, "view")
-    return Viewed.new(ok: yes, views: views)
-}
-
-explain(error: RigError) returns Text {
-    match error {
-        when Missing(name) then { return "missing {name}" }
-        when Database(message) then { return message }
-        when Unauthorized then { return "unauthorized" }
-        when BadRequest(message) then { return message }
-        when NotFound(resource) then { return "not found: {resource}" }
-        when Forbidden(table) then { return "forbidden {table}" }
-        when Unsafe(requested) then { return "unsafe {requested}" }
-    }
-}
+log.info("riff registry starting (rig mounts)")
 
 serve on port 8787 {
     before every request {
         log.info("incoming {request.method} {request.path}")
     }
 
-    route get "/health" {
-        reply with ServiceHealth.new(ok: yes, service: "riff")
-    }
-
-    route get "/api/riffs" {
-        let db = try open_registry_db()
-        reply with try catalog_riffs(db)
-    }
-
-    route get "/api/riffs/{name: Text}" {
-        let db = try open_registry_db()
-        reply with try package_with_downloads(db, name)
-    }
-
-    route get "/api/riffs/{name: Text}/history" {
-        let db = try open_registry_db()
-        reply with try install_history(db, name)
-    }
-
-    route post "/api/riffs/{name: Text}/track" {
-        reply with try track_download(name)
-    }
-
-    route post "/api/riffs/{name: Text}/view" {
-        reply with try track_view(name)
-    }
-
-    when anything fails with RigError as error {
-        reply text explain(error) as "text/plain; charset=utf-8" status 400
-    }
-
-    route get "/" {
-        reply file "web/dist/index.html"
-    }
-
-    route get "/packages/{name: Text}" {
-        reply file "web/dist/index.html"
-    }
-
-    route get "/{*filepath}" {
-        if filepath.contains("..") {
-            reply text "forbidden" as "text/plain; charset=utf-8" status 403
-        } else {
-            reply file "web/dist/{filepath}"
-        }
-    }
+    mount rig_riff
 }
