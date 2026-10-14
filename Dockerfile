@@ -16,6 +16,7 @@ RUN apt-get update \
 WORKDIR /src
 ARG VAAB_REPO=https://github.com/vaab-lang/vaab.git
 ARG VAAB_REF=master
+ARG VAAB_COMMIT=4226194
 RUN git clone --depth 1 --branch "${VAAB_REF}" "${VAAB_REPO}" vaab \
     && cd vaab \
     && cargo build --release -p vaab-cli --bin vaab -j 1 \
