@@ -72,6 +72,17 @@ type RiffViewed {
     views: Int
 }
 
+type RiffRegisterBody {
+    name: Text
+    version: Text
+    description: Text
+    author: Text
+    licence: Text
+    repo: Text
+    needs: Text
+    tags: Text
+}
+
 type RegistryHealth {
     ok: Bool
     service: Text
@@ -239,7 +250,41 @@ to drop_legacy_todos_table(db: Db) returns Int {
     }
 }
 
+to migrate_registry(db: Db) returns Int or fails RigError {
+    let _cfg = try exec_sql(db, "create table if not exists studio_config (key text primary key, value text not null)")
+    let _rf = try exec_sql(db, "create table if not exists riffs (name text primary key, version text not null, description text not null, author text not null, licence text not null, repo text not null, needs text not null, tags text not null default '')")
+    let _re = try exec_sql(db, "create table if not exists riff_events (id text primary key, name text not null, kind text not null, ts text not null)")
+    try migrate_riff_events_columns(db)
+    try seed_registry(db)
+    let _flag = try config_set(db, "registry_v1", "1")
+    return 1
+}
+
+to registry_events_migrated(db: Db) returns Bool {
+    match db.from("studio_config").equals("key", "registry_events_v1").first() {
+        when success maybe then match maybe {
+            when found _ then { return yes }
+            when nothing then { return no }
+        }
+        when failure _ then { return no }
+    }
+}
+
+to migrate_riff_events_columns(db: Db) returns Int or fails RigError {
+    if registry_events_migrated(db) {
+        return 0
+    }
+    if is_postgres() {
+        let _k = try exec_sql(db, "alter table riff_events add column if not exists kind text not null default 'install'")
+        let _t = try exec_sql(db, "alter table riff_events add column if not exists ts text not null default '0'")
+        let _u = try exec_sql(db, "update riff_events set ts = cast(extract(epoch from now()) as text) where ts = '0' or ts is null")
+    }
+    let _done = try config_set(db, "registry_events_v1", "1")
+    return _done
+}
+
 to ensure_schema(db: Db) returns Int or fails RigError {
+    let _registry = try migrate_registry(db)
     if schema_is_ready(db) {
         return 1
     }
@@ -446,12 +491,90 @@ to package_with_downloads(db: Db, name: Text) returns RiffPackage or fails RigEr
     }
 }
 
-to catalog_riffs(db: Db) returns [RiffPackage] or fails RigError {
+to catalog_riffs(db: Db) returns [{Text: Text}] or fails RigError {
+    try migrate_registry(db)
     try seed_registry(db)
-    let rig_pkg = try package_with_downloads(db, "rig")
-    let supabase = try package_with_downloads(db, "supabase")
-    let tape = try package_with_downloads(db, "tape")
-    return [rig_pkg, supabase, tape]
+    let empty: [Text] = []
+    let sql = "select r.name, r.version, r.description, r.author, r.licence, r.repo, r.needs, r.tags, cast((select count(*) from riff_events e where e.name = r.name and e.kind = 'install') as text) as downloads, cast((select count(*) from riff_events e where e.name = r.name and e.kind = 'view') as text) as views from riffs r order by r.name"
+    if is_postgres() {
+        match db.query(sql, empty) {
+            when success rows then { return rows }
+            when failure error then match error {
+                when Failed(message) then { fail RigError.Database(message) }
+            }
+        }
+    }
+    match db.query(sql, empty) {
+        when success rows then { return rows }
+        when failure error then match error {
+            when Failed(message) then { fail RigError.Database(message) }
+        }
+    }
+}
+
+to github_repo_ok(repo: Text) returns Bool {
+    let lower = repo.lower()
+    if not lower.contains("github.com/") { return no }
+    if lower.contains(" ") { return no }
+    return yes
+}
+
+to register_riff(db: Db, body: RiffRegisterBody) returns RiffPackage or fails RigError {
+    if not github_repo_ok(body.repo) {
+        fail RigError.BadRequest("repo must be a github.com URL")
+    }
+    if body.name.is_empty {
+        fail RigError.BadRequest("name is required")
+    }
+    if body.name.contains("..") {
+        fail RigError.BadRequest("bad riff name")
+    }
+    if body.name.contains("/") {
+        fail RigError.BadRequest("bad riff name")
+    }
+    if body.name.contains(" ") {
+        fail RigError.BadRequest("bad riff name")
+    }
+    match db.from("riffs").equals("name", body.name).first() {
+        when success maybe then match maybe {
+            when found _ then {
+                match db.from("riffs").equals("name", body.name).update({
+                    "version": body.version,
+                    "description": body.description,
+                    "author": body.author,
+                    "licence": body.licence,
+                    "repo": body.repo,
+                    "needs": body.needs,
+                    "tags": body.tags,
+                }) {
+                    when success _ then { return try package_with_downloads(db, body.name) }
+                    when failure error then match error {
+                        when Failed(message) then { fail RigError.Database(message) }
+                    }
+                }
+            }
+            when nothing then {
+                match db.from("riffs").insert({
+                    "name": body.name,
+                    "version": body.version,
+                    "description": body.description,
+                    "author": body.author,
+                    "licence": body.licence,
+                    "repo": body.repo,
+                    "needs": body.needs,
+                    "tags": body.tags,
+                }) {
+                    when success _ then { return try package_with_downloads(db, body.name) }
+                    when failure error then match error {
+                        when Failed(message) then { fail RigError.Database(message) }
+                    }
+                }
+            }
+        }
+        when failure error then match error {
+            when Failed(message) then { fail RigError.Database(message) }
+        }
+    }
 }
 
 to install_history(db: Db, name: Text) returns [{Text: Text}] or fails RigError {
@@ -2591,7 +2714,7 @@ cast RigRoutes {
         return OkCount.new(count: count)
     }
 
-    factory riff_catalog() returns [RiffPackage] or fails RigError {
+    factory riff_catalog() returns [{Text: Text}] or fails RigError {
         let db = try RigRoutes.db()
         return catalog_riffs(db)
     }
@@ -2623,9 +2746,38 @@ cast RigRoutes {
         let views = try track_riff(db, name, "view")
         return RiffViewed.new(ok: yes, views: views)
     }
+
+    factory riff_register(body: RiffRegisterBody) returns RiffPackage or fails RigError {
+        let db = try RigRoutes.db()
+        return register_riff(db, body)
+    }
+
+    factory riff_migrate() returns OkCount or fails RigError {
+        let db = try RigRoutes.db()
+        let count = try migrate_registry(db)
+        return OkCount.new(count: count)
+    }
 }
 
 mount rig_registry at "/api" {
+    route post "/migrate" {
+        match RigRoutes.riff_migrate() {
+            when success ok then { reply with ok }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 400
+            }
+        }
+    }
+
+    route post "/riffs/register" expecting RiffRegisterBody as body {
+        match RigRoutes.riff_register(body) {
+            when success pkg then { reply with pkg status 201 }
+            when failure error then {
+                reply text explain(error) as "text/plain; charset=utf-8" status 400
+            }
+        }
+    }
+
     route get "/riffs" {
         match RigRoutes.riff_catalog() {
             when success rows then { reply with rows }

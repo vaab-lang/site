@@ -27,6 +27,12 @@ export function RiffHeader() {
             Browse
           </Link>
           <a
+            href="/studio/"
+            className="text-slate-400 transition-colors hover:text-slate-100"
+          >
+            Studio
+          </a>
+          <a
             href={`${SITE_ORIGIN}/#install`}
             className="text-slate-400 transition-colors hover:text-slate-100"
           >

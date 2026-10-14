@@ -2,6 +2,7 @@ import { ArrowUpRight, Download, Eye, Package, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { AddRiffDialog } from '@/components/riff/AddRiffDialog'
 import { DownloadChart } from '@/components/riff/DownloadChart'
 import { RiffHeader } from '@/components/riff/RiffHeader'
 import { Badge } from '@/components/ui/badge'
@@ -21,23 +22,26 @@ export function RiffPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const refreshCatalog = async (initial: boolean) => {
+    try {
+      const rows = await listRiffsWithStats()
+      setPackages(rows)
+      setError(null)
+    } catch (err) {
+      if (initial) {
+        setError(err instanceof Error ? err.message : 'could not load catalog')
+      }
+    } finally {
+      if (initial) setLoading(false)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
 
     async function refresh(initial: boolean) {
-      try {
-        const rows = await listRiffsWithStats()
-        if (!cancelled) {
-          setPackages(rows)
-          setError(null)
-        }
-      } catch (err) {
-        if (!cancelled && initial) {
-          setError(err instanceof Error ? err.message : 'could not load catalog')
-        }
-      } finally {
-        if (!cancelled && initial) setLoading(false)
-      }
+      if (cancelled) return
+      await refreshCatalog(initial)
     }
 
     void refresh(true)
@@ -90,15 +94,18 @@ export function RiffPage() {
               your manifest.
             </p>
 
-            <div className="relative mt-8 max-w-xl">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search riffs…"
-                className="h-14 pl-12 text-base"
-                aria-label="Search riffs"
-              />
+            <div className="mt-8 flex max-w-xl flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search riffs…"
+                  className="h-14 pl-12 text-base"
+                  aria-label="Search riffs"
+                />
+              </div>
+              <AddRiffDialog onAdded={() => void refreshCatalog(false)} />
             </div>
 
             <p className="mt-4 text-sm text-slate-500">
