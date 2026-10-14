@@ -83,6 +83,74 @@ for each line in mem.lines {
 }`,
   },
   {
+    id: 'numbers',
+    label: 'Numbers',
+    description: 'Means, z-scores, and the clock',
+    source: `let samples = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]
+let mean = samples.mean() otherwise 0.0
+let window = [5.0, 7.0, 9.0]
+print((window.mean() otherwise 0.0).round())
+
+let z = (9.0 - mean) / 2.0
+print(z.round())
+print(if Clock.millis() > 0 { "yes" } else { "no" })`,
+  },
+  {
+    id: 'json',
+    label: 'JSON',
+    description: 'Decode a record, or walk an unknown document',
+    source: `type Note {
+    title: Text
+    tags: list of Text
+    hint: maybe Text
+}
+
+let payload = "\\{\\"title\\":\\"packing list\\",\\"tags\\":[\\"travel\\",\\"home\\"]\\}"
+
+show(text: Text) returns Text or fails JsonError {
+    let note = try from_json(text, as: Note)
+    print(note.title)
+    let doc = try Json.parse(text)
+    let tags = doc.at("tags").as_list() otherwise []
+    print(tags.first.as_text() otherwise "")
+    print(note.hint otherwise "none")
+    return "ok"
+}
+
+match show(payload) {
+    when success _ then {}
+    when failure error then match error {
+        when Failed(message) then print(message)
+    }
+}`,
+  },
+  {
+    id: 'bytes',
+    label: 'Bytes',
+    description: 'Little-endian reads that fail softly',
+    source: `demo() returns Int or fails BytesError {
+    let payload = try Bytes.from_hex(
+        "010000002a0000000000000001f9ffffffffffffff03000000416461"
+    )
+    print(try payload.u32_le(at: 0))
+    print(try payload.u64_le(at: 4))
+    print(try payload.bool(at: 12))
+    match try payload.borsh_text(at: 21) {
+        when (name, _) then print(name)
+    }
+    return 0
+}
+
+match demo() {
+    when success _ then {}
+    when failure error then match error {
+        when OutOfRange(at, length) then print("out of range {at} of {length}")
+        when TooLarge(at) then print("too large at {at}")
+        when Invalid(message) then print(message)
+    }
+}`,
+  },
+  {
     id: 'match',
     label: 'Match',
     description: 'Pattern matching on choices',

@@ -23,4 +23,5 @@ benchmarks/.data/
 # rig-backed riff registry DB
 riff-rig.db
 riff-rig.db-*
+riff-rig-test*.db
 riff-stats.vaab.kv

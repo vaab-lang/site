@@ -2,6 +2,28 @@
 
 What shipped in each Vaab release. Newest first.
 
+## Unreleased
+
+### Time, JSON, bytes, and long-lived servers
+
+The standard library can keep a process alive, read data in, and push it out.
+
+| | |
+|---|---|
+| `Clock.millis` / `Clock.monotonic_millis` | Wall time in milliseconds, and a steady clock for durations. `now()` stays whole seconds. |
+| `sleep(milliseconds:)` | Parks the task. The thread keeps running other work. |
+| Float and list maths | `sqrt`, `ln`, `exp`, `pow`, `floor`, `ceil`, `min`, `max`, `divided_by`, `sum`, `mean`, `sorted`. |
+| `from_json(text, as: T)` | Decode into a declared type. `Json.parse` walks unknown shapes. |
+| `Bytes` | Hex, base64, and base58, plus little-endian reads. A bad offset is `BytesError`, not a crash. |
+| `on start` | Runs once after the listener binds. Tasks it starts outlive the block. |
+| Process-wide handles | A top-level `Shared`, `Channel`, `Db`, `Store`, `Logger`, or `Hub` is one value for every request. |
+| Parking HTTP | `http.get`, `http.post`, and `http.send` wait off the scheduler thread. |
+| `Socket` | A WebSocket client. Messages arrive on an ordinary channel. |
+| `socket "/path" as name` | A server route with the same socket shape. |
+| `Hub` | `join` and `broadcast`. A full buffer disconnects that client. |
+| `db.transaction` | One transaction for the block. File databases open in WAL mode. |
+| Worker pool | `vaab serve` runs requests on the multi-worker scheduler. `Shared.update` holds a lock for the closure. |
+
 ## 0.1.4 — 13 Oct 2026
 
 ### Riffs, `Db`, and `vaab serve`

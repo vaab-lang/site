@@ -1,9 +1,12 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { oneDark } from '@codemirror/theme-one-dark'
 import {
+  Binary,
   Braces,
+  Calculator,
   Copy,
   Database,
+  FileJson,
   Hand,
   Layers,
   Loader2,
@@ -34,6 +37,9 @@ const EXAMPLE_ICONS: Record<string, LucideIcon> = {
   collections: Layers,
   casts: Shapes,
   query: Database,
+  numbers: Calculator,
+  json: FileJson,
+  bytes: Binary,
   match: Braces,
 }
 

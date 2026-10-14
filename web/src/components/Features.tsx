@@ -80,21 +80,29 @@ select {
     id: 'io',
     icon: Blocks,
     label: 'I/O',
-    title: 'HTTP, SQLite, JSON, logging',
+    title: 'Servers that stay up',
     description:
-      'Route handlers, database queries, JSON encode/decode, and a real Logger are built in. No FFI shim, no package hunt.',
-    detail: 'One binary runs the server, talks to SQLite, logs requests, and calls outbound HTTP.',
+      'JSON in both directions, bytes, SQLite transactions, and WebSockets are in the language. A slow HTTP call parks the task instead of the thread.',
+    detail: '`on start` lives for the process. `Hub.broadcast` drops a slow client instead of waiting on it.',
     filename: 'server.vaab',
-    minHeight: '200px',
-    code: `let log = Logger.stderr()
-log.set_format("json")
+    minHeight: '280px',
+    code: `let count = Shared.new(0)
+let hub = Hub.new(of: Text)
+
+tick() {
+    count.update(n -> n + 1)
+    hub.broadcast("{count.value}")
+}
 
 serve on port 8080 {
-    before every request {
-        log.info("{request.method} {request.path}")
+    on start {
+        start { every(milliseconds: 1000, f: tick) }
     }
-    route get "/users/{id: Int}" {
-        reply with try db.find(id)
+    route get "/count" {
+        reply with count.value
+    }
+    socket "/ws" as client {
+        hub.join(client)
     }
 }`,
   },
