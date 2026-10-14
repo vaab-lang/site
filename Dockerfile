@@ -5,7 +5,11 @@
 #           -e RIG_DATABASE_URL=sqlite:riff-rig.db site
 
 # ── Vaab toolchain (Postgres-enabled) ─────────────────────────────────
-FROM rust:1.80-bookworm AS vaab-build
+# Needs Rust ≥ 1.88 (transitive deps). `-j 1` keeps Render/free Docker builds
+# under memory limits while compiling cranelift/postgres.
+FROM rust:1.88-bookworm AS vaab-build
+ENV CARGO_BUILD_JOBS=1 \
+    CARGO_INCREMENTAL=0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends pkg-config libssl-dev git \
     && rm -rf /var/lib/apt/lists/*
@@ -14,7 +18,7 @@ ARG VAAB_REPO=https://github.com/vaab-lang/vaab.git
 ARG VAAB_REF=master
 RUN git clone --depth 1 --branch "${VAAB_REF}" "${VAAB_REPO}" vaab \
     && cd vaab \
-    && cargo build --release -p vaab-cli --bin vaab \
+    && cargo build --release -p vaab-cli --bin vaab -j 1 \
     && cp target/release/vaab /usr/local/bin/vaab
 
 # ── frontend ──────────────────────────────────────────────────────────
