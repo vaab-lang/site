@@ -345,20 +345,28 @@ to seed_riff(
     needs: Text,
     tags: Text,
 ) returns Int or fails RigError {
+    let row = {
+        "name": name,
+        "version": version,
+        "description": description,
+        "author": author,
+        "licence": licence,
+        "repo": repo,
+        "needs": needs,
+        "tags": tags,
+    }
     match db.from("riffs").equals("name", name).first() {
         when success maybe then match maybe {
-            when found _ then { return 0 }
+            when found _ then {
+                match db.from("riffs").equals("name", name).update(row) {
+                    when success count then { return count }
+                    when failure error then match error {
+                        when Failed(message) then { fail RigError.Database(message) }
+                    }
+                }
+            }
             when nothing then {
-                match db.from("riffs").insert({
-                    "name": name,
-                    "version": version,
-                    "description": description,
-                    "author": author,
-                    "licence": licence,
-                    "repo": repo,
-                    "needs": needs,
-                    "tags": tags,
-                }) {
+                match db.from("riffs").insert(row) {
                     when success count then { return count }
                     when failure error then match error {
                         when Failed(message) then { fail RigError.Database(message) }
@@ -491,21 +499,29 @@ to package_with_downloads(db: Db, name: Text) returns RiffPackage or fails RigEr
     }
 }
 
+to catalog_entry(db: Db, row: {Text: Text}) returns {Text: Text} or fails RigError {
+    let name = row_text(row, "name")
+    let downloads = try count_riff_kind(db, name, "install")
+    let views = try count_riff_kind(db, name, "view")
+    return {
+        "name": row.get("name") otherwise name,
+        "version": row.get("version") otherwise "0.0.0",
+        "description": row.get("description") otherwise "",
+        "author": row.get("author") otherwise "",
+        "licence": row.get("licence") otherwise "",
+        "repo": row.get("repo") otherwise "",
+        "needs": row.get("needs") otherwise "",
+        "tags": row.get("tags") otherwise "",
+        "downloads": "{downloads}",
+        "views": "{views}",
+    }
+}
+
 to catalog_riffs(db: Db) returns [{Text: Text}] or fails RigError {
     try migrate_registry(db)
     try seed_registry(db)
-    let empty: [Text] = []
-    let sql = "select r.name, r.version, r.description, r.author, r.licence, r.repo, r.needs, r.tags, cast((select count(*) from riff_events e where e.name = r.name and e.kind = 'install') as text) as downloads, cast((select count(*) from riff_events e where e.name = r.name and e.kind = 'view') as text) as views from riffs r order by r.name"
-    if is_postgres() {
-        match db.query(sql, empty) {
-            when success rows then { return rows }
-            when failure error then match error {
-                when Failed(message) then { fail RigError.Database(message) }
-            }
-        }
-    }
-    match db.query(sql, empty) {
-        when success rows then { return rows }
+    match db.from("riffs").order_desc("name").all() {
+        when success rows then { return rows.map(row -> try catalog_entry(db, row)) }
         when failure error then match error {
             when Failed(message) then { fail RigError.Database(message) }
         }
