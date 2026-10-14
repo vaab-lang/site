@@ -1,4 +1,4 @@
-import { ArrowUpRight, Download, Package, Search } from 'lucide-react'
+import { ArrowUpRight, Download, Eye, Package, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -6,7 +6,7 @@ import { DownloadChart } from '@/components/riff/DownloadChart'
 import { RiffHeader } from '@/components/riff/RiffHeader'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { listRiffsWithStats, riffTags, type RiffWithStats } from '@/lib/riffs'
+import { listRiffsWithStats, LIVE_POLL_MS, riffTags, type RiffWithStats } from '@/lib/riffs'
 import { cn } from '@/lib/utils'
 
 function formatDownloads(count: number): string {
@@ -23,7 +23,8 @@ export function RiffPage() {
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+
+    async function refresh(initial: boolean) {
       try {
         const rows = await listRiffsWithStats()
         if (!cancelled) {
@@ -31,15 +32,20 @@ export function RiffPage() {
           setError(null)
         }
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && initial) {
           setError(err instanceof Error ? err.message : 'could not load catalog')
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && initial) setLoading(false)
       }
-    })()
+    }
+
+    void refresh(true)
+    const timer = window.setInterval(() => void refresh(false), LIVE_POLL_MS * 2)
+
     return () => {
       cancelled = true
+      window.clearInterval(timer)
     }
   }, [])
 
@@ -57,7 +63,10 @@ export function RiffPage() {
   }, [packages, query])
 
   const totalDownloads = packages.reduce((sum, pkg) => sum + pkg.downloads, 0)
+  const totalViews = packages.reduce((sum, pkg) => sum + pkg.views, 0)
   const topHistory = packages[0]?.history ?? []
+  const topViews = packages[0]?.views ?? 0
+  const topDownloads = packages[0]?.downloads ?? 0
 
   return (
     <div className="relative min-h-screen bg-slate-950 text-slate-100 selection:bg-emerald-500/30 selection:text-emerald-50">
@@ -95,7 +104,7 @@ export function RiffPage() {
             <p className="mt-4 text-sm text-slate-500">
               {loading
                 ? 'Loading catalog…'
-                : `${filtered.length} riff${filtered.length === 1 ? '' : 's'} · ${formatDownloads(totalDownloads)} total downloads`}
+                : `${filtered.length} riff${filtered.length === 1 ? '' : 's'} · ${formatDownloads(totalViews)} views · ${formatDownloads(totalDownloads)} installs`}
             </p>
             {error && (
               <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
@@ -104,7 +113,13 @@ export function RiffPage() {
             )}
           </div>
 
-          <DownloadChart history={topHistory} className="lg:mb-2" height={180} />
+          <DownloadChart
+            history={topHistory}
+            downloads={topDownloads}
+            views={topViews}
+            className="lg:mb-2"
+            height={180}
+          />
         </div>
 
         <div className="mt-14 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -138,6 +153,10 @@ export function RiffPage() {
                   {pkg.description}
                 </p>
                 <div className="relative mt-4 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-950/60 px-2.5 py-1 font-mono text-xs text-slate-400">
+                    <Eye className="h-3 w-3 text-cyan-400/80" />
+                    {formatDownloads(pkg.views)}
+                  </span>
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-950/60 px-2.5 py-1 font-mono text-xs text-slate-400">
                     <Download className="h-3 w-3 text-emerald-400/80" />
                     {formatDownloads(pkg.downloads)}

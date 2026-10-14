@@ -1,10 +1,4 @@
 # riff — package registry at riff.vaab.dev (rig + Postgres on Render)
-#
-#   cd web && npm run build
-#   vaab gather
-#   RIG_DATABASE_URL=sqlite:riff-rig.db vaab serve main-riff.vaab
-#
-# Production: set RIG_DATABASE_URL to Render Postgres (fromDatabase in render.yaml).
 
 need rig from ./vendor/rig of RigError, RiffPackage, open_url, catalog_riffs, package_with_downloads, install_history, track_riff, riff_name_ok
 
@@ -16,6 +10,11 @@ type ServiceHealth {
 type Tracked {
     ok: Bool
     downloads: Int
+}
+
+type Viewed {
+    ok: Bool
+    views: Int
 }
 
 log.info("riff registry starting (rig + database)")
@@ -32,6 +31,15 @@ track_download(name: Text) returns Tracked or fails RigError {
     }
     let downloads = try track_riff(db, name, "install")
     return Tracked.new(ok: yes, downloads: downloads)
+}
+
+track_view(name: Text) returns Viewed or fails RigError {
+    let db = try open_registry_db()
+    if not riff_name_ok(db, name) {
+        fail RigError.BadRequest("riff not found")
+    }
+    let views = try track_riff(db, name, "view")
+    return Viewed.new(ok: yes, views: views)
 }
 
 explain(error: RigError) returns Text {
@@ -72,6 +80,10 @@ serve on port 8787 {
 
     route post "/api/riffs/{name: Text}/track" {
         reply with try track_download(name)
+    }
+
+    route post "/api/riffs/{name: Text}/view" {
+        reply with try track_view(name)
     }
 
     when anything fails with RigError as error {

@@ -1,6 +1,7 @@
-export type DownloadPoint = {
+export type HistoryPoint = {
   date: string
-  count: number
+  installs: number
+  views: number
 }
 
 export type RiffPackage = {
@@ -13,11 +14,14 @@ export type RiffPackage = {
   needs: string
   tags: string
   downloads: number
+  views: number
 }
 
 export type RiffWithStats = RiffPackage & {
-  history: DownloadPoint[]
+  history: HistoryPoint[]
 }
+
+const LIVE_POLL_MS = 4000
 
 function parseTags(tags: string): string[] {
   return tags
@@ -39,15 +43,23 @@ function packageFromApi(row: Record<string, unknown>): RiffPackage | null {
     needs: typeof row.needs === 'string' ? row.needs : '',
     tags: typeof row.tags === 'string' ? row.tags : '',
     downloads: typeof row.downloads === 'number' ? row.downloads : Number(row.downloads ?? 0),
+    views: typeof row.views === 'number' ? row.views : Number(row.views ?? 0),
   }
 }
 
-function historyFromApi(rows: Record<string, unknown>[]): DownloadPoint[] {
+function historyFromApi(rows: Record<string, unknown>[]): HistoryPoint[] {
   return rows
-    .map((row) => ({
-      date: typeof row.day === 'string' ? row.day : '',
-      count: Number(typeof row.count === 'string' ? row.count : row.count ?? 0),
-    }))
+    .map((row) => {
+      const date = typeof row.day === 'string' ? row.day : ''
+      const installs =
+        row.installs !== undefined
+          ? Number(row.installs)
+          : row.count !== undefined
+            ? Number(row.count)
+            : 0
+      const views = row.views !== undefined ? Number(row.views) : 0
+      return { date, installs, views }
+    })
     .filter((point) => point.date.length > 0)
 }
 
@@ -57,6 +69,36 @@ export async function trackInstall(name: string): Promise<void> {
   } catch {
     // Best-effort analytics.
   }
+}
+
+export async function trackView(name: string): Promise<number | null> {
+  try {
+    const response = await fetch(`/api/riffs/${encodeURIComponent(name)}/view`, { method: 'POST' })
+    if (!response.ok) return null
+    const data = (await response.json()) as { views?: number }
+    return typeof data.views === 'number' ? data.views : null
+  } catch {
+    return null
+  }
+}
+
+export async function fetchHistory(name: string): Promise<HistoryPoint[]> {
+  try {
+    const response = await fetch(`/api/riffs/${encodeURIComponent(name)}/history`)
+    if (!response.ok) return []
+    const rows = (await response.json()) as Record<string, unknown>[]
+    if (!Array.isArray(rows)) return []
+    return historyFromApi(rows)
+  } catch {
+    return []
+  }
+}
+
+export async function fetchRiffPackage(name: string): Promise<RiffPackage | null> {
+  const response = await fetch(`/api/riffs/${encodeURIComponent(name)}`)
+  if (!response.ok) return null
+  const row = (await response.json()) as Record<string, unknown>
+  return packageFromApi(row)
 }
 
 export async function listRiffsWithStats(): Promise<RiffWithStats[]> {
@@ -78,26 +120,11 @@ export async function listRiffsWithStats(): Promise<RiffWithStats[]> {
     }),
   )
 
-  return withHistory.sort((a, b) => b.downloads - a.downloads)
-}
-
-async function fetchHistory(name: string): Promise<DownloadPoint[]> {
-  try {
-    const response = await fetch(`/api/riffs/${encodeURIComponent(name)}/history`)
-    if (!response.ok) return []
-    const rows = (await response.json()) as Record<string, unknown>[]
-    if (!Array.isArray(rows)) return []
-    return historyFromApi(rows)
-  } catch {
-    return []
-  }
+  return withHistory.sort((a, b) => b.views + b.downloads - (a.views + a.downloads))
 }
 
 export async function getRiffWithStats(name: string): Promise<RiffWithStats | null> {
-  const response = await fetch(`/api/riffs/${encodeURIComponent(name)}`)
-  if (!response.ok) return null
-  const row = (await response.json()) as Record<string, unknown>
-  const pkg = packageFromApi(row)
+  const pkg = await fetchRiffPackage(name)
   if (!pkg) return null
   const history = await fetchHistory(name)
   return { ...pkg, history }
@@ -114,3 +141,5 @@ export function installCommand(name: string): string {
 export function needCommand(name: string): string {
   return `vaab need ${name}`
 }
+
+export { LIVE_POLL_MS }

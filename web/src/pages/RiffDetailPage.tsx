@@ -1,5 +1,5 @@
-import { ArrowLeft, ExternalLink, Loader2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { ArrowLeft, ExternalLink, Eye, Loader2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { CopyInstall } from '@/components/riff/CopyInstall'
@@ -10,8 +10,10 @@ import { Button } from '@/components/ui/button'
 import {
   getRiffWithStats,
   installCommand,
+  LIVE_POLL_MS,
   needCommand,
   riffTags,
+  trackView,
   type RiffWithStats,
 } from '@/lib/riffs'
 
@@ -20,24 +22,37 @@ export function RiffDetailPage() {
   const [pkg, setPkg] = useState<RiffWithStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [missing, setMissing] = useState(false)
+  const viewRecorded = useRef(false)
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
-      setLoading(true)
-      setMissing(false)
+
+    async function refresh(recordView: boolean) {
+      if (recordView && !viewRecorded.current && name) {
+        viewRecorded.current = true
+        const views = await trackView(name)
+        if (views !== null && !cancelled) {
+          setPkg((current) => (current ? { ...current, views } : current))
+        }
+      }
       const row = await getRiffWithStats(name)
       if (cancelled) return
       if (!row) {
         setMissing(true)
         setPkg(null)
       } else {
+        setMissing(false)
         setPkg(row)
       }
       setLoading(false)
-    })()
+    }
+
+    void refresh(true)
+    const timer = window.setInterval(() => void refresh(false), LIVE_POLL_MS)
+
     return () => {
       cancelled = true
+      window.clearInterval(timer)
     }
   }, [name])
 
@@ -87,6 +102,12 @@ export function RiffDetailPage() {
               </div>
               <p className="mt-5 text-lg leading-relaxed text-slate-400">{pkg.description}</p>
 
+              <p className="mt-4 inline-flex items-center gap-2 text-sm text-slate-500">
+                <Eye className="h-4 w-4 text-cyan-400/80" />
+                <span className="font-mono tabular-nums text-cyan-300">{pkg.views.toLocaleString()}</span>
+                views · live
+              </p>
+
               <dl className="mt-8 grid gap-4 sm:grid-cols-2">
                 <div className="rounded-2xl border border-slate-800/80 bg-slate-900/40 px-4 py-3">
                   <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
@@ -125,7 +146,11 @@ export function RiffDetailPage() {
             </div>
 
             <div className="space-y-5">
-              <DownloadChart history={pkg.history} />
+              <DownloadChart
+                history={pkg.history}
+                downloads={pkg.downloads}
+                views={pkg.views}
+              />
               <CopyInstall name={pkg.name} command={installCommand(pkg.name)} label="Install" />
               <CopyInstall
                 name={pkg.name}

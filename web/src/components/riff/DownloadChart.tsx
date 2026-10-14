@@ -1,14 +1,33 @@
-import type { DownloadPoint } from '@/lib/riffs'
+import type { HistoryPoint } from '@/lib/riffs'
 import { cn } from '@/lib/utils'
 
 type Props = {
-  history: DownloadPoint[]
+  history: HistoryPoint[]
+  downloads: number
+  views: number
   className?: string
   height?: number
 }
 
-export function DownloadChart({ history, className, height = 160 }: Props) {
-  if (history.length === 0) {
+function seriesPoints(
+  history: HistoryPoint[],
+  key: 'installs' | 'views',
+  innerW: number,
+  innerH: number,
+  padX: number,
+  padY: number,
+  max: number,
+) {
+  return history.map((point, index) => {
+    const x = padX + (index / Math.max(history.length - 1, 1)) * innerW
+    const count = point[key]
+    const y = padY + innerH - (count / max) * innerH
+    return { x, y, count, date: point.date }
+  })
+}
+
+export function DownloadChart({ history, downloads, views, className, height = 180 }: Props) {
+  if (history.length === 0 && downloads === 0 && views === 0) {
     return (
       <div
         className={cn(
@@ -17,7 +36,7 @@ export function DownloadChart({ history, className, height = 160 }: Props) {
         )}
         style={{ height }}
       >
-        No download data yet
+        No activity yet
       </div>
     )
   }
@@ -27,31 +46,51 @@ export function DownloadChart({ history, className, height = 160 }: Props) {
   const padY = 12
   const innerW = width - padX * 2
   const innerH = height - padY * 2
-  const max = Math.max(...history.map((point) => point.count), 1)
+  const max = Math.max(
+    ...history.flatMap((point) => [point.installs, point.views]),
+    downloads,
+    views,
+    1,
+  )
 
-  const points = history.map((point, index) => {
-    const x = padX + (index / Math.max(history.length - 1, 1)) * innerW
-    const y = padY + innerH - (point.count / max) * innerH
-    return { x, y, count: point.count, date: point.date }
-  })
+  const installPts = seriesPoints(history, 'installs', innerW, innerH, padX, padY, max)
+  const viewPts = seriesPoints(history, 'views', innerW, innerH, padX, padY, max)
 
-  const line = points.map((point) => `${point.x},${point.y}`).join(' ')
-  const area = `${points[0]!.x},${padY + innerH} ${line} ${points[points.length - 1]!.x},${padY + innerH}`
+  const installLine = installPts.map((point) => `${point.x},${point.y}`).join(' ')
+  const viewLine = viewPts.map((point) => `${point.x},${point.y}`).join(' ')
 
-  const total = history.reduce((sum, point) => sum + point.count, 0)
+  const installArea =
+    installPts.length > 0
+      ? `${installPts[0]!.x},${padY + innerH} ${installLine} ${installPts[installPts.length - 1]!.x},${padY + innerH}`
+      : ''
 
   return (
     <div className={cn('relative overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/60', className)}>
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_100%,rgba(16,185,129,0.12),transparent)]" />
-      <div className="relative flex items-end justify-between gap-4 px-5 pt-5">
+      <div className="relative flex flex-wrap items-end justify-between gap-4 px-5 pt-5">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-400/90">
-            Downloads
-          </p>
-          <p className="mt-1 font-mono text-3xl font-bold tabular-nums text-slate-50">
-            {total.toLocaleString()}
+            Activity
           </p>
           <p className="mt-1 text-sm text-slate-500">last 30 days</p>
+        </div>
+        <div className="flex gap-6 text-right">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400/80">
+              Installs
+            </p>
+            <p className="font-mono text-2xl font-bold tabular-nums text-slate-50 transition-all duration-300">
+              {downloads.toLocaleString()}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-400/80">
+              Views
+            </p>
+            <p className="font-mono text-2xl font-bold tabular-nums text-slate-50 transition-all duration-300">
+              {views.toLocaleString()}
+            </p>
+          </div>
         </div>
       </div>
       <svg
@@ -59,10 +98,10 @@ export function DownloadChart({ history, className, height = 160 }: Props) {
         className="relative mt-2 w-full"
         preserveAspectRatio="none"
         role="img"
-        aria-label="Download trend over the last 30 days"
+        aria-label="Install and view trend over the last 30 days"
       >
         <defs>
-          <linearGradient id="riff-area" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id="riff-install-area" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="rgba(16,185,129,0.35)" />
             <stop offset="100%" stopColor="rgba(16,185,129,0)" />
           </linearGradient>
@@ -78,16 +117,39 @@ export function DownloadChart({ history, className, height = 160 }: Props) {
             strokeWidth="1"
           />
         ))}
-        <polygon points={area} fill="url(#riff-area)" />
-        <polyline
-          points={line}
-          fill="none"
-          stroke="#34d399"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
+        {installArea && <polygon points={installArea} fill="url(#riff-install-area)" />}
+        {installLine && (
+          <polyline
+            points={installLine}
+            fill="none"
+            stroke="#34d399"
+            strokeWidth="2.5"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        )}
+        {viewLine && (
+          <polyline
+            points={viewLine}
+            fill="none"
+            stroke="#22d3ee"
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            strokeDasharray="6 4"
+          />
+        )}
       </svg>
+      <div className="relative flex gap-4 px-5 pb-4 text-xs text-slate-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-0.5 w-4 rounded bg-emerald-400" />
+          Installs
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-0.5 w-4 rounded border-t-2 border-dashed border-cyan-400" />
+          Views
+        </span>
+      </div>
     </div>
   )
 }
