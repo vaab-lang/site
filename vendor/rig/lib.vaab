@@ -278,10 +278,10 @@ to migrate_riff_events_columns(db: Db) returns Int or fails RigError {
 }
 
 to ensure_schema(db: Db) returns Int or fails RigError {
-    let _registry = try migrate_registry(db)
     if schema_is_ready(db) {
         return 1
     }
+    let _registry = try migrate_registry(db)
     let _legacy = drop_legacy_todos_table(db)
     let _p = try exec_sql(db, "create table if not exists profiles (id text primary key, email text not null, name text not null default '')")
     let _r = try exec_sql(db, "create table if not exists riff_events (id text primary key, name text not null, kind text not null, ts text not null)")
@@ -649,6 +649,165 @@ to has_table_name(names: [Text], target: Text, i: Int) returns Bool {
     return has_table_name(names, target, i + 1)
 }
 
+to load_pg_table_batch(db: Db) returns TableMetaBatch or fails RigError {
+    let cols_sql = "select cast(c.table_name as text) as table_name, cast(c.ordinal_position - 1 as text) as cid, cast(c.column_name as text) as name, cast(c.data_type as text) as type, case when c.is_nullable = 'NO' then '1' else '0' end as notnull, coalesce(cast(c.column_default as text), '') as dflt_value, case when pk.column_name is not null then '1' else '0' end as pk from information_schema.columns c left join ( select kcu.table_name, kcu.column_name from information_schema.table_constraints tc join information_schema.key_column_usage kcu on tc.constraint_name = kcu.constraint_name and tc.table_schema = kcu.table_schema where tc.constraint_type = 'PRIMARY KEY' and tc.table_schema = 'public' ) pk on pk.table_name = c.table_name and pk.column_name = c.column_name where c.table_schema = 'public' order by c.table_name, c.ordinal_position"
+    let fks_sql = "select cast(tc.table_name as text) as table_name, cast(kcu.column_name as text) as \"from\", cast(ccu.table_name as text) as \"table\", cast(ccu.column_name as text) as \"to\" from information_schema.table_constraints tc join information_schema.key_column_usage kcu on tc.constraint_name = kcu.constraint_name and tc.table_schema = kcu.table_schema join information_schema.constraint_column_usage ccu on ccu.constraint_name = tc.constraint_name and ccu.table_schema = tc.table_schema where tc.constraint_type = 'FOREIGN KEY' and tc.table_schema = 'public'"
+    let idx_sql = "select cast(tablename as text) as table_name, cast(indexname as text) as name, cast(indexdef as text) as origin from pg_indexes where schemaname = 'public'"
+    let counts_sql = "select cast(relname as text) as name, cast(coalesce(n_live_tup, 0) as text) as row_count from pg_stat_user_tables where schemaname = 'public'"
+    let rls_sql = "select key, value from studio_config where key like 'rls:%'"
+    let columns = try query_sql(db, cols_sql)
+    let foreign_keys = try query_sql(db, fks_sql)
+    let indexes = try query_sql(db, idx_sql)
+    let counts = try query_sql(db, counts_sql)
+    let rls_rows = try query_sql(db, rls_sql)
+    return TableMetaBatch.new(
+        columns: columns,
+        foreign_keys: foreign_keys,
+        indexes: indexes,
+        counts: counts,
+        rls_rows: rls_rows,
+    )
+}
+
+to empty_column_row() returns {Text: Text} {
+    return {"cid": "", "name": "", "type": "", "notnull": "", "dflt_value": "", "pk": ""}
+}
+
+to column_row_for_table(row: {Text: Text}, table: Text) returns {Text: Text} {
+    if row_text(row, "table_name") != table {
+        return empty_column_row()
+    }
+    return {
+        "cid": row_text(row, "cid"),
+        "name": row_text(row, "name"),
+        "type": row_text(row, "type"),
+        "notnull": row_text(row, "notnull"),
+        "dflt_value": row_text(row, "dflt_value"),
+        "pk": row_text(row, "pk"),
+    }
+}
+
+to columns_for_table(batch: TableMetaBatch, table: Text) returns [{Text: Text}] {
+    return batch.columns.map(row -> column_row_for_table(row, table))
+}
+
+to empty_fk_row() returns {Text: Text} {
+    return {"from": "", "table": "", "to": ""}
+}
+
+to fk_row_for_table(row: {Text: Text}, table: Text) returns {Text: Text} {
+    if row_text(row, "table_name") != table {
+        return empty_fk_row()
+    }
+    return {
+        "from": row_text(row, "from"),
+        "table": row_text(row, "table"),
+        "to": row_text(row, "to"),
+    }
+}
+
+to fks_for_table(batch: TableMetaBatch, table: Text) returns [{Text: Text}] {
+    return batch.foreign_keys.map(row -> fk_row_for_table(row, table))
+}
+
+to empty_index_row() returns {Text: Text} {
+    return {"name": "", "origin": ""}
+}
+
+to index_row_for_table(row: {Text: Text}, table: Text) returns {Text: Text} {
+    if row_text(row, "table_name") != table {
+        return empty_index_row()
+    }
+    return {"name": row_text(row, "name"), "origin": row_text(row, "origin")}
+}
+
+to indexes_for_table(batch: TableMetaBatch, table: Text) returns [{Text: Text}] {
+    return batch.indexes.map(row -> index_row_for_table(row, table))
+}
+
+to row_count_for_table(batch: TableMetaBatch, table: Text) returns Text {
+    return row_count_scan(batch.counts, table, 0)
+}
+
+to row_count_scan(rows: [{Text: Text}], table: Text, i: Int) returns Text {
+    if i >= rows.count { return "0" }
+    if row_text(rows[i], "name") == table {
+        return row_text(rows[i], "row_count")
+    }
+    return row_count_scan(rows, table, i + 1)
+}
+
+to rls_for_table(batch: TableMetaBatch, table: Text) returns Text {
+    let key = "rls:{table}"
+    return config_value_scan(batch.rls_rows, key, 0)
+}
+
+to config_value_scan(rows: [{Text: Text}], key: Text, i: Int) returns Text {
+    if i >= rows.count { return "false" }
+    if row_text(rows[i], "key") == key {
+        return nonempty(row_text(rows[i], "value"), "false")
+    }
+    return config_value_scan(rows, key, i + 1)
+}
+
+to describe_table_batch(row: {Text: Text}, batch: TableMetaBatch) returns StudioTableInfo {
+    let name = row_text(row, "name")
+    let kind = nonempty(row_text(row, "type"), "table")
+    let sql = row_text(row, "sql")
+    if not ident_ok(name) {
+        return StudioTableInfo.new(
+            name: name,
+            kind: kind,
+            sql: sql,
+            row_count: "0",
+            rls_enabled: "false",
+            columns: empty_rows(),
+            foreign_keys: empty_rows(),
+            indexes: empty_rows(),
+        )
+    }
+    return StudioTableInfo.new(
+        name: name,
+        kind: kind,
+        sql: sql,
+        row_count: row_count_for_table(batch, name),
+        rls_enabled: rls_for_table(batch, name),
+        columns: columns_for_table(batch, name),
+        foreign_keys: fks_for_table(batch, name),
+        indexes: indexes_for_table(batch, name),
+    )
+}
+
+to list_studio_tables_fresh(db: Db) returns [StudioTableInfo] or fails RigError {
+    let catalog = try catalog_table_rows(db)
+    if is_postgres() {
+        let batch = try load_pg_table_batch(db)
+        return catalog.map(row -> describe_table_batch(row, batch))
+    }
+    return catalog.map(row -> describe_table(db, row))
+}
+
+to list_studio_table(db: Db, table: Text) returns StudioTableInfo or fails RigError {
+    let name = try allow_user_table(table)
+    let catalog = try catalog_table_rows(db)
+    let row = try catalog_row_for(catalog, name, 0)
+    if is_postgres() {
+        let batch = try load_pg_table_batch(db)
+        return describe_table_batch(row, batch)
+    }
+    return describe_table(db, row)
+}
+
+to catalog_row_for(rows: [{Text: Text}], name: Text, i: Int) returns {Text: Text} or fails RigError {
+    if i >= rows.count {
+        fail RigError.NotFound(name)
+    }
+    if row_text(rows[i], "name") == name {
+        return rows[i]
+    }
+    return try catalog_row_for(rows, name, i + 1)
+}
+
 to allow_studio_table(db: Db, table: Text) returns Text or fails RigError {
     let name = try allow_user_table(table)
     let names = try studio_table_names(db)
@@ -737,8 +896,8 @@ to list_where(db: Db, table: Text, column: Text, value: Text) returns [{Text: Te
 to get(db: Db, table: Text, id: Text) returns {Text: Text} or fails RigError {
     let name = try allow_studio_table(db, table)
     let pk = primary_key(db, name)
-    match db.from(name).equals(pk, id).first() {
-        when success maybe then match maybe {
+    match db.from(name).equals(pk, id).limit(1).all() {
+        when success rows then match rows.first {
             when found row then { return row }
             when nothing then { fail RigError.NotFound(id) }
         }
@@ -1039,6 +1198,14 @@ type StudioTableInfo {
     columns: [{Text: Text}]
     foreign_keys: [{Text: Text}]
     indexes: [{Text: Text}]
+}
+
+type TableMetaBatch {
+    columns: [{Text: Text}]
+    foreign_keys: [{Text: Text}]
+    indexes: [{Text: Text}]
+    counts: [{Text: Text}]
+    rls_rows: [{Text: Text}]
 }
 
 type StudioSqlBody {
@@ -1463,8 +1630,7 @@ to describe_table(db: Db, row: {Text: Text}) returns StudioTableInfo {
 }
 
 to list_studio_tables(db: Db) returns [StudioTableInfo] or fails RigError {
-    let rows = try catalog_table_rows(db)
-    return rows.map(row -> describe_table(db, row))
+    return try list_studio_tables_fresh(db)
 }
 
 to log_studio(db: Db, service: Text, level: Text, method: Text, path: Text, msg: Text, status_code: Text, duration_ms: Text) returns Int {
@@ -1551,7 +1717,7 @@ to run_studio_sql(db: Db, sql: Text) returns [{Text: Text}] or fails RigError {
         }
     }
     match db.execute(safe, empty) {
-        when success count then { return [{"count": "{count}"}] }
+        when success count then { return ([{"count": "{count}"}]) }
         when failure error then match error {
             when Failed(message) then { fail RigError.Database(message) }
         }
@@ -1622,7 +1788,7 @@ to run_studio_ddl(db: Db, body: StudioDdlBody) returns [{Text: Text}] or fails R
         }
         let _n = try exec_sql(db, "create table {table} ({cols})")
         let _l = log_studio(db, "postgres", "info", "POST", "/studio-api/tables/ddl", "create {table}", "200", "0")
-        return [{"count": "1", "table": table}]
+        return ([{"count": "1", "table": table}])
     }
     if body.action == "drop" {
         let _n = try exec_sql(db, "drop table if exists {table}")
@@ -1814,8 +1980,8 @@ to list_snippets(db: Db) returns [{Text: Text}] or fails RigError {
 
 to save_snippet(db: Db, body: StudioSnippetBody) returns Int or fails RigError {
     let id = nonempty(body.id, "snip-{now()}")
-    match db.from("studio_snippets").equals("id", id).first() {
-        when success maybe then match maybe {
+    match db.from("studio_snippets").equals("id", id).limit(1).all() {
+        when success rows then match rows.first {
             when found _ then match db.from("studio_snippets").equals("id", id).update({
                 "name": body.name,
                 "description": body.description,
@@ -1894,8 +2060,8 @@ to save_auth_user(db: Db, body: StudioAuthUserBody) returns Int or fails RigErro
             }
         }
     }
-    match db.from("auth_users").equals("id", id).first() {
-        when success maybe then match maybe {
+    match db.from("auth_users").equals("id", id).limit(1).all() {
+        when success rows then match rows.first {
             when found _ then match db.from("auth_users").equals("id", id).update({
                 "email": body.email,
                 "phone": body.phone,
@@ -1920,8 +2086,8 @@ to save_auth_user(db: Db, body: StudioAuthUserBody) returns Int or fails RigErro
                     "banned_until": body.banned_until,
                 }) {
                     when success count then {
-                        match db.from("profiles").equals("id", id).first() {
-                            when success existing then match existing {
+                        match db.from("profiles").equals("id", id).limit(1).all() {
+                            when success existing then match existing.first {
                                 when found _ then { return count }
                                 when nothing then match db.from("profiles").insert({"id": id, "email": body.email, "name": ""}) {
                                     when success _ then { return count }
@@ -1976,8 +2142,8 @@ to save_policy(db: Db, body: StudioPolicyBody) returns Int or fails RigError {
         return 1
     }
     let id = nonempty(body.id, "pol-{body.table_name}-{now()}")
-    match db.from("studio_policies").equals("id", id).first() {
-        when success maybe then match maybe {
+    match db.from("studio_policies").equals("id", id).limit(1).all() {
+        when success rows then match rows.first {
             when found _ then match db.from("studio_policies").equals("id", id).update({
                 "schema_name": nonempty(body.schema_name, "public"),
                 "table_name": body.table_name,
@@ -2042,8 +2208,8 @@ to save_bucket(db: Db, body: StudioBucketBody) returns Int or fails RigError {
     if id.is_empty {
         fail RigError.BadRequest("name required")
     }
-    match db.from("studio_buckets").equals("id", id).first() {
-        when success maybe then match maybe {
+    match db.from("studio_buckets").equals("id", id).limit(1).all() {
+        when success rows then match rows.first {
             when found _ then match db.from("studio_buckets").equals("id", id).update({
                 "name": nonempty(body.name, id),
                 "public": nonempty(body.public, "false"),
@@ -2094,8 +2260,8 @@ to save_object(db: Db, body: StudioObjectBody) returns Int or fails RigError {
         fail RigError.BadRequest("name required")
     }
     let id = nonempty(body.id, "{body.bucket_id}-{body.name}-{now()}")
-    match db.from("studio_objects").equals("id", id).first() {
-        when success maybe then match maybe {
+    match db.from("studio_objects").equals("id", id).limit(1).all() {
+        when success rows then match rows.first {
             when found _ then match db.from("studio_objects").equals("id", id).update({
                 "bucket_id": body.bucket_id,
                 "name": body.name,
@@ -2170,8 +2336,8 @@ to save_function(db: Db, body: StudioFunctionBody) returns StudioFunctionResult 
         return StudioFunctionResult.new(count: 0, invoked: yes, status: "200", body: "ok {body.slug}", duration_ms: "{elapsed}")
     }
     let id = nonempty(body.id, nonempty(body.slug, "fn-{now()}"))
-    match db.from("studio_functions").equals("id", id).first() {
-        when success maybe then match maybe {
+    match db.from("studio_functions").equals("id", id).limit(1).all() {
+        when success rows then match rows.first {
             when found _ then match db.from("studio_functions").equals("id", id).update({
                 "slug": nonempty(body.slug, id),
                 "name": nonempty(body.name, body.slug),
@@ -2309,10 +2475,36 @@ to write_table_lints(db: Db, row: {Text: Text}) {
     write_fk_lints(db, name, table_foreign_keys(db, name), table_indexes(db, name), 0)
 }
 
+to write_table_lints_batched(db: Db, row: {Text: Text}, batch: TableMetaBatch) {
+    let name = row_text(row, "name")
+    if not ident_ok(name) { return }
+    if is_sqlite_name(name) { return }
+    let kind = row_text(row, "type")
+    if kind == "view" {
+        let _v = log_studio(db, "advisor", "INFO", "GET", "/studio-api/advisors", "exposed view {name}", "", "0")
+        return
+    }
+    let columns = columns_for_table(batch, name)
+    if not has_pk(columns, 0) {
+        let _p = log_studio(db, "advisor", "ERROR", "GET", "/studio-api/advisors", "table missing primary key {name}", "", "0")
+    }
+    if not has_policy(db, name) {
+        if rls_for_table(batch, name) == "false" {
+            let _r = log_studio(db, "advisor", "WARN", "GET", "/studio-api/advisors", "table without RLS policies {name}", "", "0")
+        }
+    }
+    write_fk_lints(db, name, fks_for_table(batch, name), indexes_for_table(batch, name), 0)
+}
+
 to list_advisors(db: Db) returns [{Text: Text}] or fails RigError {
     let _c = try exec_sql(db, "delete from studio_logs where service = 'advisor'")
     let tables = try catalog_table_rows(db)
-    tables.each(row -> write_table_lints(db, row))
+    if is_postgres() {
+        let batch = try load_pg_table_batch(db)
+        tables.each(row -> write_table_lints_batched(db, row, batch))
+    } else {
+        tables.each(row -> write_table_lints(db, row))
+    }
     match db.from("studio_logs").equals("service", "advisor").order_desc("id").all() {
         when success rows then { return rows }
         when failure error then match error {
@@ -2337,8 +2529,8 @@ to save_migration(db: Db, body: StudioMigrationBody) returns Int or fails RigErr
     if not body.statements.is_empty {
         let _n = try run_studio_sql(db, body.statements)
     }
-    match db.from("studio_migrations").equals("version", body.version).first() {
-        when success maybe then match maybe {
+    match db.from("studio_migrations").equals("version", body.version).limit(1).all() {
+        when success rows then match rows.first {
             when found _ then match db.from("studio_migrations").equals("version", body.version).update({
                 "name": body.name,
                 "statements": body.statements,
@@ -2378,8 +2570,8 @@ to list_webhooks(db: Db) returns [{Text: Text}] or fails RigError {
 
 to save_webhook(db: Db, body: StudioWebhookBody) returns Int or fails RigError {
     let id = nonempty(body.id, "hook-{now()}")
-    match db.from("studio_webhooks").equals("id", id).first() {
-        when success maybe then match maybe {
+    match db.from("studio_webhooks").equals("id", id).limit(1).all() {
+        when success rows then match rows.first {
             when found _ then match db.from("studio_webhooks").equals("id", id).update({
                 "name": body.name,
                 "table_name": body.table_name,
@@ -2564,6 +2756,11 @@ cast RigRoutes {
     factory studio_tables() returns [StudioTableInfo] or fails RigError {
         let db = try RigRoutes.db()
         return try list_studio_tables(db)
+    }
+
+    factory studio_table(name: Text) returns StudioTableInfo or fails RigError {
+        let db = try RigRoutes.db()
+        return try list_studio_table(db, name)
     }
 
     factory studio_sql(sql: Text) returns [{Text: Text}] or fails RigError {
@@ -2952,6 +3149,20 @@ mount rig_studio_api at "/studio-api" {
                 when success tables then { reply with tables }
                 when failure error then {
                     reply text explain(error) as "text/plain; charset=utf-8" status 500
+                }
+            }
+            when failure _ then {
+                reply text "unauthorized" as "text/plain" status 401
+            }
+        }
+    }
+
+    route get "/tables/{table: Text}" {
+        match authorize_studio(default_studio(), request.headers) {
+            when success _ then match RigRoutes.studio_table(table) {
+                when success info then { reply with info }
+                when failure error then {
+                    reply text explain(error) as "text/plain; charset=utf-8" status 404
                 }
             }
             when failure _ then {
