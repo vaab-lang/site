@@ -233,11 +233,8 @@ to allow_user_table(table: Text) returns Text or fails RigError {
 }
 
 to schema_is_ready(db: Db) returns Bool {
-    match db.from("studio_config").equals("key", "schema_ready_v2").first() {
-        when success maybe then match maybe {
-            when found _ then { return yes }
-            when nothing then { return no }
-        }
+    match db.from("studio_config").equals("key", "schema_ready_v2").count() {
+        when success n then { return n > 0 }
         when failure _ then { return no }
     }
 }
@@ -261,11 +258,8 @@ to migrate_registry(db: Db) returns Int or fails RigError {
 }
 
 to registry_events_migrated(db: Db) returns Bool {
-    match db.from("studio_config").equals("key", "registry_events_v1").first() {
-        when success maybe then match maybe {
-            when found _ then { return yes }
-            when nothing then { return no }
-        }
+    match db.from("studio_config").equals("key", "registry_events_v1").count() {
+        when success n then { return n > 0 }
         when failure _ then { return no }
     }
 }
@@ -355,9 +349,9 @@ to seed_riff(
         "needs": needs,
         "tags": tags,
     }
-    match db.from("riffs").equals("name", name).first() {
-        when success maybe then match maybe {
-            when found _ then {
+    match db.from("riffs").equals("name", name).count() {
+        when success existing then {
+            if existing > 0 {
                 match db.from("riffs").equals("name", name).update(row) {
                     when success count then { return count }
                     when failure error then match error {
@@ -365,12 +359,10 @@ to seed_riff(
                     }
                 }
             }
-            when nothing then {
-                match db.from("riffs").insert(row) {
-                    when success count then { return count }
-                    when failure error then match error {
-                        when Failed(message) then { fail RigError.Database(message) }
-                    }
+            match db.from("riffs").insert(row) {
+                when success count then { return count }
+                when failure error then match error {
+                    when Failed(message) then { fail RigError.Database(message) }
                 }
             }
         }
@@ -399,7 +391,7 @@ to seed_registry(db: Db) returns Int or fails RigError {
         "PostgREST client over Vaab’s http.send builtin. Connect, fetch, insert, patch, and delete rows.",
         "vaab",
         "MIT",
-        "https://github.com/vaab-lang/vaab-riffs/tree/main/supabase",
+        "https://github.com/vaab-lang/vaab-riffs",
         "vaab at 0.1",
         "database,api,supabase",
     )
@@ -472,31 +464,34 @@ to count_riff(db: Db, name: Text) returns Int or fails RigError {
     }
 }
 
-to package_with_downloads(db: Db, name: Text) returns RiffPackage or fails RigError {
-    match db.from("riffs").equals("name", name).first() {
-        when success maybe then match maybe {
-            when found row then {
-                let downloads = try count_riff_kind(db, name, "install")
-                let views = try count_riff_kind(db, name, "view")
-                return RiffPackage.new(
-                    name: row.get("name") otherwise name,
-                    version: row.get("version") otherwise "0.0.0",
-                    description: row.get("description") otherwise "",
-                    author: row.get("author") otherwise "",
-                    licence: row.get("licence") otherwise "",
-                    repo: row.get("repo") otherwise "",
-                    needs: row.get("needs") otherwise "",
-                    tags: row.get("tags") otherwise "",
-                    downloads: downloads,
-                    views: views,
-                )
-            }
+to riff_row(db: Db, name: Text) returns {Text: Text} or fails RigError {
+    match db.from("riffs").equals("name", name).all() {
+        when success rows then match rows.first {
+            when found row then { return row }
             when nothing then { fail RigError.NotFound(name) }
         }
         when failure error then match error {
             when Failed(message) then { fail RigError.Database(message) }
         }
     }
+}
+
+to package_with_downloads(db: Db, name: Text) returns RiffPackage or fails RigError {
+    let row = try riff_row(db, name)
+    let downloads = try count_riff_kind(db, name, "install")
+    let views = try count_riff_kind(db, name, "view")
+    return RiffPackage.new(
+        name: row.get("name") otherwise name,
+        version: row.get("version") otherwise "0.0.0",
+        description: row.get("description") otherwise "",
+        author: row.get("author") otherwise "",
+        licence: row.get("licence") otherwise "",
+        repo: row.get("repo") otherwise "",
+        needs: row.get("needs") otherwise "",
+        tags: row.get("tags") otherwise "",
+        downloads: downloads,
+        views: views,
+    )
 }
 
 to catalog_entry(db: Db, row: {Text: Text}) returns {Text: Text} or fails RigError {
@@ -551,9 +546,9 @@ to register_riff(db: Db, body: RiffRegisterBody) returns RiffPackage or fails Ri
     if body.name.contains(" ") {
         fail RigError.BadRequest("bad riff name")
     }
-    match db.from("riffs").equals("name", body.name).first() {
-        when success maybe then match maybe {
-            when found _ then {
+    match db.from("riffs").equals("name", body.name).count() {
+        when success existing then {
+            if existing > 0 {
                 match db.from("riffs").equals("name", body.name).update({
                     "version": body.version,
                     "description": body.description,
@@ -569,21 +564,19 @@ to register_riff(db: Db, body: RiffRegisterBody) returns RiffPackage or fails Ri
                     }
                 }
             }
-            when nothing then {
-                match db.from("riffs").insert({
-                    "name": body.name,
-                    "version": body.version,
-                    "description": body.description,
-                    "author": body.author,
-                    "licence": body.licence,
-                    "repo": body.repo,
-                    "needs": body.needs,
-                    "tags": body.tags,
-                }) {
-                    when success _ then { return try package_with_downloads(db, body.name) }
-                    when failure error then match error {
-                        when Failed(message) then { fail RigError.Database(message) }
-                    }
+            match db.from("riffs").insert({
+                "name": body.name,
+                "version": body.version,
+                "description": body.description,
+                "author": body.author,
+                "licence": body.licence,
+                "repo": body.repo,
+                "needs": body.needs,
+                "tags": body.tags,
+            }) {
+                when success _ then { return try package_with_downloads(db, body.name) }
+                when failure error then match error {
+                    when Failed(message) then { fail RigError.Database(message) }
                 }
             }
         }
@@ -1229,8 +1222,8 @@ to has_text(value: Text) returns Bool {
 }
 
 to config_get(db: Db, key: Text) returns Text or fails RigError {
-    match db.from("studio_config").equals("key", key).first() {
-        when success maybe then match maybe {
+    match db.from("studio_config").equals("key", key).all() {
+        when success rows then match rows.first {
             when found row then match row.get("value") {
                 when found value then { return value }
                 when nothing then { return "" }
@@ -1244,15 +1237,17 @@ to config_get(db: Db, key: Text) returns Text or fails RigError {
 }
 
 to config_set(db: Db, key: Text, value: Text) returns Int or fails RigError {
-    match db.from("studio_config").equals("key", key).first() {
-        when success maybe then match maybe {
-            when found _ then match db.from("studio_config").equals("key", key).update({"value": value}) {
-                when success count then { return count }
-                when failure error then match error {
-                    when Failed(message) then { fail RigError.Database(message) }
+    match db.from("studio_config").equals("key", key).count() {
+        when success existing then {
+            if existing > 0 {
+                match db.from("studio_config").equals("key", key).update({"value": value}) {
+                    when success count then { return count }
+                    when failure error then match error {
+                        when Failed(message) then { fail RigError.Database(message) }
+                    }
                 }
             }
-            when nothing then match db.from("studio_config").insert({"key": key, "value": value}) {
+            match db.from("studio_config").insert({"key": key, "value": value}) {
                 when success count then { return count }
                 when failure error then match error {
                     when Failed(message) then { fail RigError.Database(message) }
